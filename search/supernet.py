@@ -4,8 +4,6 @@ import torch.nn.functional as F
 from search.operations import *
 from torch.autograd import Variable
 from tools.utils.genotypes import PRIMITIVES
-# from utils.darts_utils import drop_path, compute_speed, compute_speed_tensorrt
-from pdb import set_trace as bp
 from search.seg_oprs import Head
 import numpy as np
 
@@ -186,15 +184,15 @@ class Network_Multi_Path(nn.Module):
                          bias=False, groups=1, slimmable=False)]) for _, head_ratio in self._stem_head_width])
 
         self.head0 = nn.ModuleList(
-            [Head(self.num_filters(8, head_ratio), num_classes, False) for _, head_ratio in self._stem_head_width])
+            [Head(self.num_filters(8, head_ratio), 1, False) for _, head_ratio in self._stem_head_width])
         self.head1 = nn.ModuleList(
-            [Head(self.num_filters(8, head_ratio), num_classes, False) for _, head_ratio in self._stem_head_width])
+            [Head(self.num_filters(8, head_ratio), 1, False) for _, head_ratio in self._stem_head_width])
         self.head2 = nn.ModuleList(
-            [Head(self.num_filters(8, head_ratio), num_classes, False) for _, head_ratio in self._stem_head_width])
+            [Head(self.num_filters(8, head_ratio), 1, False) for _, head_ratio in self._stem_head_width])
         self.head02 = nn.ModuleList(
-            [Head(self.num_filters(8, head_ratio) * 2, num_classes, False) for _, head_ratio in self._stem_head_width])
+            [Head(self.num_filters(8, head_ratio) * 2, 1, False) for _, head_ratio in self._stem_head_width])
         self.head12 = nn.ModuleList(
-            [Head(self.num_filters(8, head_ratio) * 2, num_classes, False) for _, head_ratio in self._stem_head_width])
+            [Head(self.num_filters(8, head_ratio) * 2, 1, False) for _, head_ratio in self._stem_head_width])
 
         # contains arch_param names: {"alphas": alphas, "betas": betas, "ratios": ratios}
         self._arch_names = []
@@ -296,10 +294,8 @@ class Network_Multi_Path(nn.Module):
             for j, cell in enumerate(cells):
                 # scales
                 # out,down -- 0: from down; 1: from keep
-                out0 = None;
-                out1 = None
-                down0 = None;
-                down1 = None
+                out0 = None; out1 = None
+                down0 = None; down1 = None
                 alpha = alphas[j][i - j]
                 # ratio: (in, out, down)
                 # int: force #channel; tensor: arch_ratio; float(<=1): force width
@@ -340,9 +336,7 @@ class Network_Multi_Path(nn.Module):
                         ))
             out_prev = out
         ###################################
-        out0 = None;
-        out1 = None;
-        out2 = None
+        out0 = None; out1 = None; out2 = None
 
         out0 = out[0][0]
         out1 = F.interpolate(refine16[0](out[1][0]), scale_factor=2, mode='bilinear', align_corners=True)
@@ -352,18 +346,20 @@ class Network_Multi_Path(nn.Module):
         out2 = F.interpolate(refine32[2](out2), scale_factor=2, mode='bilinear', align_corners=True)
         out2 = refine32[3](torch.cat([out2, out[0][0]], dim=1))
 
-        pred0 = head0(out0)
-        pred1 = head1(out1)
-        pred2 = head2(out2)
-        pred02 = head02(torch.cat([out0, out2], dim=1))
-        pred12 = head12(torch.cat([out1, out2], dim=1))
+        pred0 = torch.abs(head0(out0))
+        pred1 = torch.abs(head1(out1))
+        pred2 = torch.abs(head2(out2))
+        pred02 = torch.abs(head02(torch.cat([out0, out2], dim=1)))
+        pred12 = torch.abs(head12(torch.cat([out1, out2], dim=1)))
 
-        if not self.training:
-            pred0 = F.interpolate(pred0, scale_factor=8, mode='bilinear', align_corners=True)
-            pred1 = F.interpolate(pred1, scale_factor=8, mode='bilinear', align_corners=True)
-            pred2 = F.interpolate(pred2, scale_factor=8, mode='bilinear', align_corners=True)
-            pred02 = F.interpolate(pred02, scale_factor=8, mode='bilinear', align_corners=True)
-            pred12 = F.interpolate(pred12, scale_factor=8, mode='bilinear', align_corners=True)
+        # 如果不是训练就扩到原图尺寸
+        # if not self.training:
+        #     pred0 = F.interpolate(pred0, scale_factor=8, mode='bilinear', align_corners=True)
+        #     pred1 = F.interpolate(pred1, scale_factor=8, mode='bilinear', align_corners=True)
+        #     pred2 = F.interpolate(pred2, scale_factor=8, mode='bilinear', align_corners=True)
+        #     pred02 = F.interpolate(pred02, scale_factor=8, mode='bilinear', align_corners=True)
+        #     pred12 = F.interpolate(pred12, scale_factor=8, mode='bilinear', align_corners=True)
+
         return pred0, pred1, pred2, pred02, pred12
         ###################################
 
