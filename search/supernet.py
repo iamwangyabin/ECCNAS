@@ -1,25 +1,22 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from operations import *
+from search.operations import *
 from torch.autograd import Variable
-from genotypes import PRIMITIVES
+from tools.utils.genotypes import PRIMITIVES
 # from utils.darts_utils import drop_path, compute_speed, compute_speed_tensorrt
 from pdb import set_trace as bp
-from seg_oprs import Head
+from search.seg_oprs import Head
 import numpy as np
 
-# https://github.com/YongfeiYan/Gumbel_Softmax_VAE/blob/master/gumbel_softmax_vae.py
 def sample_gumbel(shape, eps=1e-20):
     U = torch.rand(shape)
     U = U.cuda()
     return -torch.log(-torch.log(U + eps) + eps)
 
-
 def gumbel_softmax_sample(logits, temperature=1):
     y = logits + sample_gumbel(logits.size())
     return F.softmax(y / temperature, dim=-1)
-
 
 def gumbel_softmax(logits, temperature=1, hard=False):
     """
@@ -28,7 +25,7 @@ def gumbel_softmax(logits, temperature=1, hard=False):
     return: flatten --> [*, n_class] an one-hot vector
     """
     y = gumbel_softmax_sample(logits, temperature)
-    
+
     if not hard:
         return y
 
@@ -110,8 +107,8 @@ class Cell(nn.Module):
         self._op = MixedOp(C_in, C_out, width_mult_list=width_mult_list)
 
         if self._down:
-            self.downsample = MixedOp(C_in, C_in*2, stride=2, width_mult_list=width_mult_list)
-    
+            self.downsample = MixedOp(C_in, C_in * 2, stride=2, width_mult_list=width_mult_list)
+
     def forward(self, input, alphas, ratios):
         # ratios: (in, out, down)
         out = self._op(input, alphas, (ratios[0], ratios[1]))
@@ -128,29 +125,32 @@ class Cell(nn.Module):
 
 
 class Network_Multi_Path(nn.Module):
-    def __init__(self, num_classes=19, layers=16, criterion=nn.CrossEntropyLoss(ignore_index=-1), Fch=12, width_mult_list=[1.,], prun_modes=['arch_ratio',], stem_head_width=[(1., 1.),]):
+    def __init__(self, layers=16, criterion=nn.CrossEntropyLoss(ignore_index=-1), Fch=12,
+                 width_mult_list=[1., ], prun_modes=['arch_ratio', ], stem_head_width=[(1., 1.), ]):
         super(Network_Multi_Path, self).__init__()
-        self._num_classes = num_classes
         assert layers >= 3
         self._layers = layers
         self._criterion = criterion
         self._Fch = Fch
         self._width_mult_list = width_mult_list
         self._prun_modes = prun_modes
-        self.prun_mode = None # prun_mode is higher priority than _prun_modes
+        self.prun_mode = None  # prun_mode is higher priority than _prun_modes
         self._stem_head_width = stem_head_width
         self._flops = 0
         self._params = 0
 
         self.stem = nn.ModuleList([
             nn.Sequential(
-                ConvNorm(3, self.num_filters(2, stem_ratio)*2, kernel_size=3, stride=2, padding=1, bias=False, groups=1, slimmable=False),
-                BasicResidual2x(self.num_filters(2, stem_ratio)*2, self.num_filters(4, stem_ratio)*2, kernel_size=3, stride=2, groups=1, slimmable=False),
-                BasicResidual2x(self.num_filters(4, stem_ratio)*2, self.num_filters(8, stem_ratio), kernel_size=3, stride=2, groups=1, slimmable=False)
-            ) for stem_ratio, _ in self._stem_head_width ])
+                ConvNorm(3, self.num_filters(2, stem_ratio) * 2, kernel_size=3, stride=2, padding=1, bias=False,
+                         groups=1, slimmable=False),
+                BasicResidual2x(self.num_filters(2, stem_ratio) * 2, self.num_filters(4, stem_ratio) * 2, kernel_size=3,
+                                stride=2, groups=1, slimmable=False),
+                BasicResidual2x(self.num_filters(4, stem_ratio) * 2, self.num_filters(8, stem_ratio), kernel_size=3,
+                                stride=2, groups=1, slimmable=False)
+            ) for stem_ratio, _ in self._stem_head_width])
 
         self.cells = nn.ModuleList()
-        for l in range(layers):
+        for l in range(self._layers):
             cells = nn.ModuleList()
             if l == 0:
                 # first node has only one input (prev cell's output)
@@ -170,20 +170,31 @@ class Network_Multi_Path(nn.Module):
 
         self.refine32 = nn.ModuleList([
             nn.ModuleList([
-                ConvNorm(self.num_filters(32, head_ratio), self.num_filters(16, head_ratio), kernel_size=1, bias=False, groups=1, slimmable=False),
-                ConvNorm(self.num_filters(32, head_ratio), self.num_filters(16, head_ratio), kernel_size=3, padding=1, bias=False, groups=1, slimmable=False),
-                ConvNorm(self.num_filters(16, head_ratio), self.num_filters(8, head_ratio), kernel_size=1, bias=False, groups=1, slimmable=False),
-                ConvNorm(self.num_filters(16, head_ratio), self.num_filters(8, head_ratio), kernel_size=3, padding=1, bias=False, groups=1, slimmable=False)]) for _, head_ratio in self._stem_head_width ])
+                ConvNorm(self.num_filters(32, head_ratio), self.num_filters(16, head_ratio), kernel_size=1, bias=False,
+                         groups=1, slimmable=False),
+                ConvNorm(self.num_filters(32, head_ratio), self.num_filters(16, head_ratio), kernel_size=3, padding=1,
+                         bias=False, groups=1, slimmable=False),
+                ConvNorm(self.num_filters(16, head_ratio), self.num_filters(8, head_ratio), kernel_size=1, bias=False,
+                         groups=1, slimmable=False),
+                ConvNorm(self.num_filters(16, head_ratio), self.num_filters(8, head_ratio), kernel_size=3, padding=1,
+                         bias=False, groups=1, slimmable=False)]) for _, head_ratio in self._stem_head_width])
         self.refine16 = nn.ModuleList([
             nn.ModuleList([
-                ConvNorm(self.num_filters(16, head_ratio), self.num_filters(8, head_ratio), kernel_size=1, bias=False, groups=1, slimmable=False),
-                ConvNorm(self.num_filters(16, head_ratio), self.num_filters(8, head_ratio), kernel_size=3, padding=1, bias=False, groups=1, slimmable=False)]) for _, head_ratio in self._stem_head_width ])
+                ConvNorm(self.num_filters(16, head_ratio), self.num_filters(8, head_ratio), kernel_size=1, bias=False,
+                         groups=1, slimmable=False),
+                ConvNorm(self.num_filters(16, head_ratio), self.num_filters(8, head_ratio), kernel_size=3, padding=1,
+                         bias=False, groups=1, slimmable=False)]) for _, head_ratio in self._stem_head_width])
 
-        self.head0 = nn.ModuleList([ Head(self.num_filters(8, head_ratio), num_classes, False) for _, head_ratio in self._stem_head_width ])
-        self.head1 = nn.ModuleList([ Head(self.num_filters(8, head_ratio), num_classes, False) for _, head_ratio in self._stem_head_width ])
-        self.head2 = nn.ModuleList([ Head(self.num_filters(8, head_ratio), num_classes, False) for _, head_ratio in self._stem_head_width ])
-        self.head02 = nn.ModuleList([ Head(self.num_filters(8, head_ratio)*2, num_classes, False) for _, head_ratio in self._stem_head_width ])
-        self.head12 = nn.ModuleList([ Head(self.num_filters(8, head_ratio)*2, num_classes, False) for _, head_ratio in self._stem_head_width ])
+        self.head0 = nn.ModuleList(
+            [Head(self.num_filters(8, head_ratio), num_classes, False) for _, head_ratio in self._stem_head_width])
+        self.head1 = nn.ModuleList(
+            [Head(self.num_filters(8, head_ratio), num_classes, False) for _, head_ratio in self._stem_head_width])
+        self.head2 = nn.ModuleList(
+            [Head(self.num_filters(8, head_ratio), num_classes, False) for _, head_ratio in self._stem_head_width])
+        self.head02 = nn.ModuleList(
+            [Head(self.num_filters(8, head_ratio) * 2, num_classes, False) for _, head_ratio in self._stem_head_width])
+        self.head12 = nn.ModuleList(
+            [Head(self.num_filters(8, head_ratio) * 2, num_classes, False) for _, head_ratio in self._stem_head_width])
 
         # contains arch_param names: {"alphas": alphas, "betas": betas, "ratios": ratios}
         self._arch_names = []
@@ -198,12 +209,6 @@ class Network_Multi_Path(nn.Module):
 
     def num_filters(self, scale, width=1.0):
         return int(np.round(scale * self._Fch * width))
-
-    def new(self):
-        model_new = Network(self._num_classes, self._layers, self._criterion, self._Fch).cuda()
-        for x, y in zip(model_new.arch_parameters(), self.arch_parameters()):
-                x.data.copy_(y.data)
-        return model_new
 
     def sample_prun_ratio(self, mode="arch_ratio"):
         '''
@@ -283,7 +288,7 @@ class Network_Multi_Path(nn.Module):
         else:
             ratios = self.sample_prun_ratio(mode=self._prun_modes[self.arch_idx])
 
-        out_prev = [[stem(input), None]] # stem: one cell
+        out_prev = [[stem(input), None]]  # stem: one cell
         # i: layer | j: scale
         for i, cells in enumerate(self.cells):
             # layers
@@ -291,48 +296,53 @@ class Network_Multi_Path(nn.Module):
             for j, cell in enumerate(cells):
                 # scales
                 # out,down -- 0: from down; 1: from keep
-                out0 = None; out1 = None
-                down0 = None; down1 = None
-                alpha = alphas[j][i-j]
+                out0 = None;
+                out1 = None
+                down0 = None;
+                down1 = None
+                alpha = alphas[j][i - j]
                 # ratio: (in, out, down)
                 # int: force #channel; tensor: arch_ratio; float(<=1): force width
                 if i == 0 and j == 0:
                     # first cell
-                    ratio = (self._stem_head_width[self.arch_idx][0], ratios[j][i-j], ratios[j+1][i-j])
+                    ratio = (self._stem_head_width[self.arch_idx][0], ratios[j][i - j], ratios[j + 1][i - j])
                 elif i == self._layers - 1:
                     # cell in last layer
                     if j == 0:
-                        ratio = (ratios[j][i-j-1], self._stem_head_width[self.arch_idx][1], None)
+                        ratio = (ratios[j][i - j - 1], self._stem_head_width[self.arch_idx][1], None)
                     else:
-                        ratio = (ratios[j][i-j], self._stem_head_width[self.arch_idx][1], None)
+                        ratio = (ratios[j][i - j], self._stem_head_width[self.arch_idx][1], None)
                 elif j == 2:
                     # cell in last scale: no down ratio "None"
-                    ratio = (ratios[j][i-j], ratios[j][i-j+1], None)
+                    ratio = (ratios[j][i - j], ratios[j][i - j + 1], None)
                 else:
                     if j == 0:
-                        ratio = (ratios[j][i-j-1], ratios[j][i-j], ratios[j+1][i-j])
+                        ratio = (ratios[j][i - j - 1], ratios[j][i - j], ratios[j + 1][i - j])
                     else:
-                        ratio = (ratios[j][i-j], ratios[j][i-j+1], ratios[j+1][i-j])
+                        ratio = (ratios[j][i - j], ratios[j][i - j + 1], ratios[j + 1][i - j])
                 # out,down -- 0: from down; 1: from keep
                 if j == 0:
                     out1, down1 = cell(out_prev[0][0], alpha, ratio)
                     out.append((out1, down1))
                 else:
                     if i == j:
-                        out0, down0 = cell(out_prev[j-1][1], alpha, ratio)
+                        out0, down0 = cell(out_prev[j - 1][1], alpha, ratio)
                         out.append((out0, down0))
                     else:
-                        if betas[j][i-j-1][0] > 0:
-                            out0, down0 = cell(out_prev[j-1][1], alpha, ratio)
-                        if betas[j][i-j-1][1] > 0:
+                        if betas[j][i - j - 1][0] > 0:
+                            out0, down0 = cell(out_prev[j - 1][1], alpha, ratio)
+                        if betas[j][i - j - 1][1] > 0:
                             out1, down1 = cell(out_prev[j][0], alpha, ratio)
                         out.append((
-                            sum(w * out for w, out in zip(betas[j][i-j-1], [out0, out1])),
-                            sum(w * down if down is not None else 0 for w, down in zip(betas[j][i-j-1], [down0, down1])),
-                            ))
+                            sum(w * out for w, out in zip(betas[j][i - j - 1], [out0, out1])),
+                            sum(w * down if down is not None else 0 for w, down in
+                                zip(betas[j][i - j - 1], [down0, down1])),
+                        ))
             out_prev = out
         ###################################
-        out0 = None; out1 = None; out2 = None
+        out0 = None;
+        out1 = None;
+        out2 = None
 
         out0 = out[0][0]
         out1 = F.interpolate(refine16[0](out[1][0]), scale_factor=2, mode='bilinear', align_corners=True)
@@ -356,7 +366,7 @@ class Network_Multi_Path(nn.Module):
             pred12 = F.interpolate(pred12, scale_factor=8, mode='bilinear', align_corners=True)
         return pred0, pred1, pred2, pred02, pred12
         ###################################
-    
+
     def forward_latency(self, size, alpha=True, beta=True, ratio=True):
         # out_prev: cell-state
         # index 0: keep; index 1: down
@@ -369,9 +379,12 @@ class Network_Multi_Path(nn.Module):
             alphas = [alphas0, alphas1, alphas2]
         else:
             alphas = [
-                torch.ones_like(getattr(self, self._arch_names[self.arch_idx]["alphas"][0])).cuda() * 1./len(PRIMITIVES),
-                torch.ones_like(getattr(self, self._arch_names[self.arch_idx]["alphas"][1])).cuda() * 1./len(PRIMITIVES),
-                torch.ones_like(getattr(self, self._arch_names[self.arch_idx]["alphas"][2])).cuda() * 1./len(PRIMITIVES)]
+                torch.ones_like(getattr(self, self._arch_names[self.arch_idx]["alphas"][0])).cuda() * 1. / len(
+                    PRIMITIVES),
+                torch.ones_like(getattr(self, self._arch_names[self.arch_idx]["alphas"][1])).cuda() * 1. / len(
+                    PRIMITIVES),
+                torch.ones_like(getattr(self, self._arch_names[self.arch_idx]["alphas"][2])).cuda() * 1. / len(
+                    PRIMITIVES)]
         if beta:
             betas1 = F.softmax(getattr(self, self._arch_names[self.arch_idx]["betas"][0]), dim=-1)
             betas2 = F.softmax(getattr(self, self._arch_names[self.arch_idx]["betas"][1]), dim=-1)
@@ -379,8 +392,8 @@ class Network_Multi_Path(nn.Module):
         else:
             betas = [
                 None,
-                torch.ones_like(getattr(self, self._arch_names[self.arch_idx]["betas"][0])).cuda() * 1./2,
-                torch.ones_like(getattr(self, self._arch_names[self.arch_idx]["betas"][1])).cuda() * 1./2]
+                torch.ones_like(getattr(self, self._arch_names[self.arch_idx]["betas"][0])).cuda() * 1. / 2,
+                torch.ones_like(getattr(self, self._arch_names[self.arch_idx]["betas"][1])).cuda() * 1. / 2]
         if ratio:
             # ratios = self.sample_prun_ratio(mode='arch_ratio')
             if self.prun_mode is not None:
@@ -391,11 +404,14 @@ class Network_Multi_Path(nn.Module):
             ratios = self.sample_prun_ratio(mode='max')
 
         stem_latency = 0
-        latency, size = stem[0].forward_latency(size); stem_latency = stem_latency + latency
-        latency, size = stem[1].forward_latency(size); stem_latency = stem_latency + latency
-        latency, size = stem[2].forward_latency(size); stem_latency = stem_latency + latency
-        out_prev = [[size, None]] # stem: one cell
-        latency_total = [[stem_latency, 0], [0, 0], [0, 0]] # (out, down)
+        latency, size = stem[0].forward_latency(size);
+        stem_latency = stem_latency + latency
+        latency, size = stem[1].forward_latency(size);
+        stem_latency = stem_latency + latency
+        latency, size = stem[2].forward_latency(size);
+        stem_latency = stem_latency + latency
+        out_prev = [[size, None]]  # stem: one cell
+        latency_total = [[stem_latency, 0], [0, 0], [0, 0]]  # (out, down)
 
         # i: layer | j: scale
         for i, cells in enumerate(self.cells):
@@ -405,28 +421,30 @@ class Network_Multi_Path(nn.Module):
             for j, cell in enumerate(cells):
                 # scales
                 # out,down -- 0: from down; 1: from keep
-                out0 = None; out1 = None
-                down0 = None; down1 = None
-                alpha = alphas[j][i-j]
+                out0 = None;
+                out1 = None
+                down0 = None;
+                down1 = None
+                alpha = alphas[j][i - j]
                 # ratio: (in, out, down)
                 # int: force #channel; tensor: arch_ratio; float(<=1): force width
                 if i == 0 and j == 0:
                     # first cell
-                    ratio = (self._stem_head_width[self.arch_idx][0], ratios[j][i-j], ratios[j+1][i-j])
+                    ratio = (self._stem_head_width[self.arch_idx][0], ratios[j][i - j], ratios[j + 1][i - j])
                 elif i == self._layers - 1:
                     # cell in last layer
                     if j == 0:
-                        ratio = (ratios[j][i-j-1], self._stem_head_width[self.arch_idx][1], None)
+                        ratio = (ratios[j][i - j - 1], self._stem_head_width[self.arch_idx][1], None)
                     else:
-                        ratio = (ratios[j][i-j], self._stem_head_width[self.arch_idx][1], None)
+                        ratio = (ratios[j][i - j], self._stem_head_width[self.arch_idx][1], None)
                 elif j == 2:
                     # cell in last scale
-                    ratio = (ratios[j][i-j], ratios[j][i-j+1], None)
+                    ratio = (ratios[j][i - j], ratios[j][i - j + 1], None)
                 else:
                     if j == 0:
-                        ratio = (ratios[j][i-j-1], ratios[j][i-j], ratios[j+1][i-j])
+                        ratio = (ratios[j][i - j - 1], ratios[j][i - j], ratios[j + 1][i - j])
                     else:
-                        ratio = (ratios[j][i-j], ratios[j][i-j+1], ratios[j+1][i-j])
+                        ratio = (ratios[j][i - j], ratios[j][i - j + 1], ratios[j + 1][i - j])
                 # out,down -- 0: from down; 1: from keep
                 if j == 0:
                     out1, down1 = cell.forward_latency(out_prev[0][0], alpha, ratio)
@@ -434,22 +452,23 @@ class Network_Multi_Path(nn.Module):
                     latency.append([out1[0], down1[0] if down1 is not None else None])
                 else:
                     if i == j:
-                        out0, down0 = cell.forward_latency(out_prev[j-1][1], alpha, ratio)
+                        out0, down0 = cell.forward_latency(out_prev[j - 1][1], alpha, ratio)
                         out.append((out0[1], down0[1] if down0 is not None else None))
                         latency.append([out0[0], down0[0] if down0 is not None else None])
                     else:
-                        if betas[j][i-j-1][0] > 0:
+                        if betas[j][i - j - 1][0] > 0:
                             # from down
-                            out0, down0 = cell.forward_latency(out_prev[j-1][1], alpha, ratio)
-                        if betas[j][i-j-1][1] > 0:
+                            out0, down0 = cell.forward_latency(out_prev[j - 1][1], alpha, ratio)
+                        if betas[j][i - j - 1][1] > 0:
                             # from keep
                             out1, down1 = cell.forward_latency(out_prev[j][0], alpha, ratio)
                         assert (out0 is None and out1 is None) or out0[1] == out1[1]
                         assert (down0 is None and down1 is None) or down0[1] == down1[1]
                         out.append((out0[1], down0[1] if down0 is not None else None))
                         latency.append([
-                            sum(w * out for w, out in zip(betas[j][i-j-1], [out0[0], out1[0]])),
-                            sum(w * down if down is not None else 0 for w, down in zip(betas[j][i-j-1], [down0[0] if down0 is not None else None, down1[0] if down1 is not None else None])),
+                            sum(w * out for w, out in zip(betas[j][i - j - 1], [out0[0], out1[0]])),
+                            sum(w * down if down is not None else 0 for w, down in zip(betas[j][i - j - 1], [
+                                down0[0] if down0 is not None else None, down1[0] if down1 is not None else None])),
                         ])
             out_prev = out
             for ii, lat in enumerate(latency):
@@ -461,11 +480,15 @@ class Network_Multi_Path(nn.Module):
                 else:
                     if i == ii:
                         # only from down
-                        if lat[0] is not None: latency_total[ii][0] = latency_total[ii-1][1] + lat[0]
-                        if lat[1] is not None: latency_total[ii][1] = latency_total[ii-1][1] + lat[1]
+                        if lat[0] is not None: latency_total[ii][0] = latency_total[ii - 1][1] + lat[0]
+                        if lat[1] is not None: latency_total[ii][1] = latency_total[ii - 1][1] + lat[1]
                     else:
-                        if lat[0] is not None: latency_total[ii][0] = betas[j][i-j-1][1] * latency_total[ii][0] + betas[j][i-j-1][0] * latency_total[ii-1][1] + lat[0]
-                        if lat[1] is not None: latency_total[ii][1] = betas[j][i-j-1][1] * latency_total[ii][0] + betas[j][i-j-1][0] * latency_total[ii-1][1] + lat[1]
+                        if lat[0] is not None: latency_total[ii][0] = betas[j][i - j - 1][1] * latency_total[ii][0] + \
+                                                                      betas[j][i - j - 1][0] * latency_total[ii - 1][
+                                                                          1] + lat[0]
+                        if lat[1] is not None: latency_total[ii][1] = betas[j][i - j - 1][1] * latency_total[ii][0] + \
+                                                                      betas[j][i - j - 1][0] * latency_total[ii - 1][
+                                                                          1] + lat[1]
         ###################################
         latency0 = latency_total[0][0]
         latency1 = latency_total[1][0]
@@ -507,27 +530,36 @@ class Network_Multi_Path(nn.Module):
         num_ops = len(PRIMITIVES)
 
         # define names
-        alphas = [ "alpha_"+str(idx)+"_"+str(scale) for scale in [0, 1, 2] ]
-        betas = [ "beta_"+str(idx)+"_"+str(scale) for scale in [1, 2] ]
+        alphas = ["alpha_" + str(idx) + "_" + str(scale) for scale in [0, 1, 2]]
+        betas = ["beta_" + str(idx) + "_" + str(scale) for scale in [1, 2]]
 
-        setattr(self, alphas[0], nn.Parameter(Variable(1e-3*torch.ones(self._layers, num_ops).cuda(), requires_grad=True)))
-        setattr(self, alphas[1], nn.Parameter(Variable(1e-3*torch.ones(self._layers-1, num_ops).cuda(), requires_grad=True)))
-        setattr(self, alphas[2], nn.Parameter(Variable(1e-3*torch.ones(self._layers-2, num_ops).cuda(), requires_grad=True)))
+        setattr(self, alphas[0],
+                nn.Parameter(Variable(1e-3 * torch.ones(self._layers, num_ops).cuda(), requires_grad=True)))
+        setattr(self, alphas[1],
+                nn.Parameter(Variable(1e-3 * torch.ones(self._layers - 1, num_ops).cuda(), requires_grad=True)))
+        setattr(self, alphas[2],
+                nn.Parameter(Variable(1e-3 * torch.ones(self._layers - 2, num_ops).cuda(), requires_grad=True)))
         # betas are now in-degree probs
         # 0: from down; 1: from keep
-        setattr(self, betas[0], nn.Parameter(Variable(1e-3*torch.ones(self._layers-2, 2).cuda(), requires_grad=True)))
-        setattr(self, betas[1], nn.Parameter(Variable(1e-3*torch.ones(self._layers-3, 2).cuda(), requires_grad=True)))
+        setattr(self, betas[0],
+                nn.Parameter(Variable(1e-3 * torch.ones(self._layers - 2, 2).cuda(), requires_grad=True)))
+        setattr(self, betas[1],
+                nn.Parameter(Variable(1e-3 * torch.ones(self._layers - 3, 2).cuda(), requires_grad=True)))
 
-        ratios = [ "ratio_"+str(idx)+"_"+str(scale) for scale in [0, 1, 2] ]
+        ratios = ["ratio_" + str(idx) + "_" + str(scale) for scale in [0, 1, 2]]
         if self._prun_modes[idx] == 'arch_ratio':
             # prunning ratio
             num_widths = len(self._width_mult_list)
         else:
             num_widths = 1
-        setattr(self, ratios[0], nn.Parameter(Variable(1e-3*torch.ones(self._layers-1, num_widths).cuda(), requires_grad=True)))
-        setattr(self, ratios[1], nn.Parameter(Variable(1e-3*torch.ones(self._layers-1, num_widths).cuda(), requires_grad=True)))
-        setattr(self, ratios[2], nn.Parameter(Variable(1e-3*torch.ones(self._layers-2, num_widths).cuda(), requires_grad=True)))
-        return {"alphas": alphas, "betas": betas, "ratios": ratios}, [getattr(self, name) for name in alphas] + [getattr(self, name) for name in betas] + [getattr(self, name) for name in ratios]
+        setattr(self, ratios[0],
+                nn.Parameter(Variable(1e-3 * torch.ones(self._layers - 1, num_widths).cuda(), requires_grad=True)))
+        setattr(self, ratios[1],
+                nn.Parameter(Variable(1e-3 * torch.ones(self._layers - 1, num_widths).cuda(), requires_grad=True)))
+        setattr(self, ratios[2],
+                nn.Parameter(Variable(1e-3 * torch.ones(self._layers - 2, num_widths).cuda(), requires_grad=True)))
+        return {"alphas": alphas, "betas": betas, "ratios": ratios}, [getattr(self, name) for name in alphas] + [
+            getattr(self, name) for name in betas] + [getattr(self, name) for name in ratios]
 
     def _reset_arch_parameters(self, idx):
         num_ops = len(PRIMITIVES)
@@ -537,11 +569,19 @@ class Network_Multi_Path(nn.Module):
         else:
             num_widths = 1
 
-        getattr(self, self._arch_names[idx]["alphas"][0]).data = Variable(1e-3*torch.ones(self._layers, num_ops).cuda(), requires_grad=True)
-        getattr(self, self._arch_names[idx]["alphas"][1]).data = Variable(1e-3*torch.ones(self._layers-1, num_ops).cuda(), requires_grad=True)
-        getattr(self, self._arch_names[idx]["alphas"][2]).data = Variable(1e-3*torch.ones(self._layers-2, num_ops).cuda(), requires_grad=True)
-        getattr(self, self._arch_names[idx]["betas"][0]).data = Variable(1e-3*torch.ones(self._layers-2, 2).cuda(), requires_grad=True)
-        getattr(self, self._arch_names[idx]["betas"][1]).data = Variable(1e-3*torch.ones(self._layers-3, 2).cuda(), requires_grad=True)
-        getattr(self, self._arch_names[idx]["ratios"][0]).data = Variable(1e-3*torch.ones(self._layers-1, num_widths).cuda(), requires_grad=True)
-        getattr(self, self._arch_names[idx]["ratios"][1]).data = Variable(1e-3*torch.ones(self._layers-1, num_widths).cuda(), requires_grad=True)
-        getattr(self, self._arch_names[idx]["ratios"][2]).data = Variable(1e-3*torch.ones(self._layers-2, num_widths).cuda(), requires_grad=True)
+        getattr(self, self._arch_names[idx]["alphas"][0]).data = Variable(
+            1e-3 * torch.ones(self._layers, num_ops).cuda(), requires_grad=True)
+        getattr(self, self._arch_names[idx]["alphas"][1]).data = Variable(
+            1e-3 * torch.ones(self._layers - 1, num_ops).cuda(), requires_grad=True)
+        getattr(self, self._arch_names[idx]["alphas"][2]).data = Variable(
+            1e-3 * torch.ones(self._layers - 2, num_ops).cuda(), requires_grad=True)
+        getattr(self, self._arch_names[idx]["betas"][0]).data = Variable(1e-3 * torch.ones(self._layers - 2, 2).cuda(),
+                                                                         requires_grad=True)
+        getattr(self, self._arch_names[idx]["betas"][1]).data = Variable(1e-3 * torch.ones(self._layers - 3, 2).cuda(),
+                                                                         requires_grad=True)
+        getattr(self, self._arch_names[idx]["ratios"][0]).data = Variable(
+            1e-3 * torch.ones(self._layers - 1, num_widths).cuda(), requires_grad=True)
+        getattr(self, self._arch_names[idx]["ratios"][1]).data = Variable(
+            1e-3 * torch.ones(self._layers - 1, num_widths).cuda(), requires_grad=True)
+        getattr(self, self._arch_names[idx]["ratios"][2]).data = Variable(
+            1e-3 * torch.ones(self._layers - 2, num_widths).cuda(), requires_grad=True)

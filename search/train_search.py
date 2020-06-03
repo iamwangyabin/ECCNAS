@@ -9,6 +9,9 @@ from tqdm import tqdm
 import torch
 import torch.nn as nn
 import torch.utils
+from torch.utils.data import DataLoader
+from torch.utils.data.dataloader import default_collate
+
 from tensorboardX import SummaryWriter
 
 import numpy as np
@@ -19,8 +22,12 @@ from matplotlib import pyplot as plt
 from thop import profile
 
 from config_search import config
-from dataloader import get_train_loader
-from datasets import Cityscapes
+
+from search.crowd_dataloader import Crowd
+
+
+# from dataloader import get_train_loader
+# from datasets import Cityscapes
 
 from utils.init_func import init_weight
 from seg_opr.loss_opr import ProbOhemCrossEntropy2d
@@ -30,6 +37,14 @@ from architect import Architect
 from utils.darts_utils import create_exp_dir, save, plot_op, plot_path_width, objective_acc_lat
 from model_search import Network_Multi_Path as Network
 from model_seg import Network_Multi_Path_Infer
+
+def train_collate(batch):
+    transposed_batch = list(zip(*batch))
+    images = torch.stack(transposed_batch[0], 0)
+    points = transposed_batch[1]  # the number of points is not fixed, keep it as a list of tensor
+    targets = transposed_batch[2]
+    st_sizes = torch.FloatTensor(transposed_batch[3])
+    return images, points, targets, st_sizes
 
 
 def main(pretrain=True):
@@ -58,6 +73,7 @@ def main(pretrain=True):
         torch.cuda.manual_seed(seed)
 
     # config network and criterion ################
+    '''Need to change to BeysLoss'''
     min_kept = int(config.batch_size * config.image_height * config.image_width // (16 * config.gt_down_sampling ** 2))
     ohem_criterion = ProbOhemCrossEntropy2d(ignore_label=255, thresh=0.7, min_kept=min_kept, use_weight=False)
 
@@ -100,14 +116,32 @@ def main(pretrain=True):
     lr_policy = torch.optim.lr_scheduler.ExponentialLR(optimizer, 0.978)
 
     # data loader ###########################
-    data_setting = {'img_root': config.img_root_folder,
-                    'gt_root': config.gt_root_folder,
-                    'train_source': config.train_source,
-                    'eval_source': config.eval_source,
-                    'down_sampling': config.down_sampling}
-    train_loader_model = get_train_loader(config, Cityscapes, portion=config.train_portion)
-    train_loader_arch = get_train_loader(config, Cityscapes, portion=config.train_portion-1)
-
+    '''Change Dataloader
+            Need three dataloader train-model train-arch val
+    '''
+    downsample_ratio = args.downsample_ratio
+    datasets = {x: Crowd(os.path.join(args.data_dir, x),
+                          args.crop_size,
+                          args.downsample_ratio,
+                          args.is_gray, x) for x in ['train', 'val']}
+    dataloaders = {x: DataLoader(datasets[x],
+                                      collate_fn=(train_collate
+                                                  if x == 'train' else default_collate),
+                                      batch_size=(args.batch_size
+                                                  if x == 'train' else 1),
+                                      shuffle=(True if x == 'train' else False),
+                                      num_workers=args.num_workers * self.device_count,
+                                      pin_memory=(True if x == 'train' else False))
+                        for x in ['train', 'val']}
+    train_loader_model = dataloaders['train']
+    # data_setting = {'img_root': config.img_root_folder,
+    #                 'gt_root': config.gt_root_folder,
+    #                 'train_source': config.train_source,
+    #                 'eval_source': config.eval_source,
+    #                 'down_sampling': config.down_sampling}
+    # train_loader_model = get_train_loader(config, Cityscapes, portion=config.train_portion)
+    # train_loader_arch = get_train_loader(config, Cityscapes, portion=config.train_portion-1)
+    '''Need to reqair this function'''
     evaluator = SegEvaluator(Cityscapes(data_setting, 'val', None), config.num_classes, config.image_mean,
                              config.image_std, model, config.eval_scale_array, config.eval_flip, 0, config=config,
                              verbose=False, save_path=None, show_image=False)

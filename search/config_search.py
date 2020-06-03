@@ -75,6 +75,8 @@ C.arch_weight_decay = 0
 C.layers = 16
 C.branch = 2
 
+
+'''预训练'''
 C.pretrain = True
 # C.pretrain = "search-pretrain-256x512_F12.L16_batch3-20200101-012345"
 ########################################
