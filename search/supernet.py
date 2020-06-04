@@ -123,7 +123,7 @@ class Cell(nn.Module):
 
 
 class Network_Multi_Path(nn.Module):
-    def __init__(self, layers=16, criterion=nn.CrossEntropyLoss(ignore_index=-1), Fch=12,
+    def __init__(self, layers=16, criterion=None, Fch=12,
                  width_mult_list=[1., ], prun_modes=['arch_ratio', ], stem_head_width=[(1., 1.), ]):
         super(Network_Multi_Path, self).__init__()
         assert layers >= 3

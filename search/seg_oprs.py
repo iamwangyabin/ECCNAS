@@ -1,9 +1,9 @@
 import numpy as np
 try:
-    from utils.darts_utils import compute_latency_ms_tensorrt as compute_latency
+    from tools.utils.darts_utils import compute_latency_ms_tensorrt as compute_latency
     print("use TensorRT for latency test")
 except:
-    from utils.darts_utils import compute_latency_ms_pytorch as compute_latency
+    from tools.utils.darts_utils import compute_latency_ms_pytorch as compute_latency
     print("use PyTorch for latency test")
 import torch
 import torch.nn as nn
@@ -220,10 +220,6 @@ class FeatureFusion(nn.Module):
         # fm is already a concatenation of multiple scales
         fm = self.conv_1x1(fm)
         return fm
-        # fm_se = self.channel_attention(fm)
-        # output = fm + fm * fm_se
-        # return output
-
 
 class Head(nn.Module):
     def __init__(self, in_planes, out_planes=19, Fch=16, scale=4, branch=2, is_aux=False, norm_layer=nn.BatchNorm2d):

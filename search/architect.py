@@ -3,7 +3,7 @@ import numpy as np
 from torch import nn
 from torch.autograd import Variable
 from pdb import set_trace as bp
-from operations import *
+from search.operations import *
 
 
 def _concat(xs):
@@ -28,8 +28,8 @@ class Architect(object):
 
         print("architect initialized!")
 
-    def _compute_unrolled_model(self, input, target, eta, network_optimizer):
-        loss = self.model._loss(input, target)
+    def _compute_unrolled_model(self, inputs, points, targets, st_sizes, eta, network_optimizer):
+        loss = self.model._loss(inputs, points, targets, st_sizes)
         theta = _concat(self.model.parameters()).data
         try:
             moment = _concat(network_optimizer.state[v]['momentum_buffer'] for v in self.model.parameters()).mul_(self.network_momentum)
@@ -39,21 +39,21 @@ class Architect(object):
         unrolled_model = self._construct_model_from_theta(theta.sub(eta, moment+dtheta))
         return unrolled_model
 
-    def step(self, input_train, target_train, input_valid, target_valid, eta=None, network_optimizer=None, unrolled=False):
+    def step(self, inputs, points, targets, st_sizes, inputs_search, points_search, targets_search, st_sizes_search, eta=None, network_optimizer=None, unrolled=False):
         for optimizer in self.optimizers:
             optimizer.zero_grad()
         if unrolled:
-                loss = self._backward_step_unrolled(input_train, target_train, input_valid, target_valid, eta, network_optimizer)
+                loss = self._backward_step_unrolled(inputs, points, targets, st_sizes, inputs_search, points_search, targets_search, st_sizes_search, eta, network_optimizer)
         else:
-                loss, loss_latency = self._backward_step(input_valid, target_valid)
+                loss, loss_latency = self._backward_step(inputs_search, points_search, targets_search, st_sizes_search)
         loss.backward()
         if loss_latency != 0: loss_latency.backward()
         for optimizer in self.optimizers:
             optimizer.step()
         return loss + loss_latency
 
-    def _backward_step(self, input_valid, target_valid):
-        loss = self.model._loss(input_valid, target_valid)
+    def _backward_step(self, inputs_search, points_search, targets_search, st_sizes_search):
+        loss = self.model._loss(inputs_search, points_search, targets_search, st_sizes_search)
         loss_latency = 0
         self.latency_supernet = 0
         self.model.prun_mode = None
@@ -75,14 +75,14 @@ class Architect(object):
 
         return loss, loss_latency
 
-    def _backward_step_unrolled(self, input_train, target_train, input_valid, target_valid, eta, network_optimizer):
-        unrolled_model = self._compute_unrolled_model(input_train, target_train, eta, network_optimizer)
-        unrolled_loss = unrolled_model._loss(input_valid, target_valid)
+    def _backward_step_unrolled(self, inputs, points, targets, st_sizes, inputs_search, points_search, targets_search, st_sizes_search, eta, network_optimizer):
+        unrolled_model = self._compute_unrolled_model(inputs, points, targets, st_sizes, eta, network_optimizer)
+        unrolled_loss = unrolled_model._loss(inputs_search, points_search, targets_search, st_sizes_search)
 
         unrolled_loss.backward()
         dalpha = [v.grad for v in unrolled_model.arch_parameters()]
         vector = [v.grad.data for v in unrolled_model.parameters()]
-        implicit_grads = self._hessian_vector_product(vector, input_train, target_train)
+        implicit_grads = self._hessian_vector_product(vector, inputs, points, targets, st_sizes)
 
         for g, ig in zip(dalpha, implicit_grads):
             g.data.sub_(eta, ig.data)
@@ -109,16 +109,16 @@ class Architect(object):
         model_new.load_state_dict(model_dict)
         return model_new.cuda()
 
-    def _hessian_vector_product(self, vector, input, target, r=1e-2):
+    def _hessian_vector_product(self, vector, inputs, points, targets, st_sizes, r=1e-2):
         R = r / _concat(vector).norm()
         for p, v in zip(self.model.parameters(), vector):
             p.data.add_(R, v)
-        loss = self.model._loss(input, target)
+        loss = self.model._loss(inputs, points, targets, st_sizes)
         grads_p = torch.autograd.grad(loss, self.model.arch_parameters())
 
         for p, v in zip(self.model.parameters(), vector):
             p.data.sub_(2*R, v)
-        loss = self.model._loss(input, target)
+        loss = self.model._loss(inputs, points, targets, st_sizes)
         grads_n = torch.autograd.grad(loss, self.model.arch_parameters())
 
         for p, v in zip(self.model.parameters(), vector):

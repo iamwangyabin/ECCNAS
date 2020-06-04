@@ -15,26 +15,20 @@ cfg = C
 
 C.seed = 12345
 
-"""please config ROOT_dir and user when u first using"""
-C.repo_name = 'FasterSeg'
-C.abs_dir = osp.realpath(".")
-C.this_dir = C.abs_dir.split(osp.sep)[-1]
-C.root_dir = C.abs_dir[:C.abs_dir.index(C.repo_name) + len(C.repo_name)]
-
 """Data Dir"""
 C.dataset_path = "/ssd1/chenwy/cityscapes/"
-C.img_root_folder = C.dataset_path
-C.gt_root_folder = C.dataset_path
-C.train_source = osp.join(C.dataset_path, "cityscapes_train_fine.txt")
-C.eval_source = osp.join(C.dataset_path, "cityscapes_val_fine.txt")
-C.test_source = osp.join(C.dataset_path, "cityscapes_test.txt")
 
-"""Path Config"""
-def add_path(path):
-    if path not in sys.path:
-        sys.path.insert(0, path)
 
-add_path(osp.join(C.root_dir, 'tools'))
+
+
+"""Criterion Parameters"""
+C.sigma = 8.0
+C.crop_size = 512
+C.downsample_ratio = 8
+C.background_ratio = 0.15
+C.use_background = True
+C.is_gray = False
+
 
 """Image Config"""
 C.num_classes = 19

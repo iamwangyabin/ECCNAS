@@ -13,7 +13,7 @@ from seg_opr.metric import hist_info, compute_score
 logger = get_logger()
 
 
-class SegEvaluator(Evaluator):
+class Evaluator(Evaluator):
     def func_per_iteration(self, data, device, iter=None):
         if self.config is not None: config = self.config
         img = data['data']
