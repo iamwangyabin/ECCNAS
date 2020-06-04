@@ -1,11 +1,10 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
-from engine.logger import get_logger
+from tools.engine.logger import get_logger
 logger = get_logger()
 
-class Bay_Loss(Module):
+class Bay_Loss(nn.Module):
     def __init__(self, use_background, device):
         super(Bay_Loss, self).__init__()
         self.device = device
@@ -30,7 +29,7 @@ class Bay_Loss(Module):
         loss = loss / len(prob_list)
         return loss
 
-class Post_Prob(Module):
+class Post_Prob(nn.Module):
     def __init__(self, sigma, c_size, stride, background_ratio, use_background, device):
         super(Post_Prob, self).__init__()
         assert c_size % stride == 0
@@ -89,7 +88,9 @@ class Criterion(nn.Module):
     # point, target, st_sizes: dataset outputs
     # pred: model outputs
     def forward(self, pred, points, target, st_sizes):
+        points = [p.cuda(non_blocking=True) for p in points]
+        target = [t.cuda(non_blocking=True) for t in target]
         prob_list = self.post_prob(points, st_sizes)
-        loss = self.criterion(prob_list, targets, pred)
+        loss = self.criterion(prob_list, target, pred)
         return loss
         

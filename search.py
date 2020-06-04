@@ -15,9 +15,7 @@ from tensorboardX import SummaryWriter
 
 import numpy as np
 import matplotlib
-# Force matplotlib to not use any Xwindows backend.
 matplotlib.use('Agg')
-from matplotlib import pyplot as plt
 from thop import profile
 
 from search.config_search import config
@@ -26,7 +24,6 @@ from search.crowd_dataloader import Crowd
 from tools.utils.init_func import init_weight
 
 from search.loss import Criterion
-
 from search.architect import Architect
 from tools.utils.darts_utils import create_exp_dir, save, plot_op, plot_path_width, objective_acc_lat
 from search.supernet import Network_Multi_Path as Network
@@ -107,6 +104,7 @@ def main(pretrain=True):
     # lr policy ##############################
     lr_policy = torch.optim.lr_scheduler.ExponentialLR(optimizer, 0.978)
     # data loader ###########################
+    device_count = torch.cuda.device_count()
     datasets = {x: Crowd(os.path.join(config.dataset_path, x),
                           config.crop_size,
                           config.downsample_ratio,
@@ -117,9 +115,10 @@ def main(pretrain=True):
                           batch_size=(config.batch_size
                                       if x == 'train' else 1),
                           shuffle=(True if x == 'train' else False),
-                          num_workers=config.num_workers * config.device_count,
+                          num_workers=config.num_workers * device_count,
                           pin_memory=(True if x == 'train' else False))
                     for x in ['train', 'val']}
+
     train_loader_model = dataloaders['train']
     val_loader_model = dataloaders['val']
 
@@ -226,9 +225,8 @@ def train(pretrain, train_loader_model, train_loader_arch, model, architect, cri
         optimizer.zero_grad()
 
         inputs, points, targets, st_sizes = dataloader_model.next()
+        # import pdb;pdb.set_trace()
         inputs = inputs.cuda(non_blocking=True)
-        points = points.cuda(non_blocking=True)
-        targets = targets.cuda(non_blocking=True)
         st_sizes = st_sizes.cuda(non_blocking=True)
 
         if update_arch:
@@ -236,8 +234,6 @@ def train(pretrain, train_loader_model, train_loader_arch, model, architect, cri
             pbar.set_description("[Arch Step %d/%d]" % (step + 1, len(train_loader_model)))
             inputs_search, points_search, targets_search, st_sizes_search = dataloader_arch.next()
             inputs_search = inputs_search.cuda(non_blocking=True)
-            points_search = points_search.cuda(non_blocking=True)
-            targets_search = targets_search.cuda(non_blocking=True)
             st_sizes_search = st_sizes_search.cuda(non_blocking=True)
 
             loss_arch = architect.step(inputs, points, targets, st_sizes, inputs_search, points_search, targets_search, st_sizes_search)

@@ -11,12 +11,7 @@ from easydict import EasyDict as edict
 
 C = edict()
 
-try:
-    from tools.utils.darts_utils import compute_latency_ms_tensorrt as compute_latency
-    print("use TensorRT for latency test")
-except:
-    from tools.utils.darts_utils import compute_latency_ms_pytorch as compute_latency
-    print("use PyTorch for latency test")
+from tools.utils.darts_utils import compute_latency_ms_pytorch as compute_latency
 
 latency_lookup_table = {}
 table_file_name = "latency_lookup_table.npy"

@@ -16,10 +16,7 @@ cfg = C
 C.seed = 12345
 
 """Data Dir"""
-C.dataset_path = "/ssd1/chenwy/cityscapes/"
-
-
-
+C.dataset_path = r".\UCF-QNRF_ECCV18"
 
 """Criterion Parameters"""
 C.sigma = 8.0

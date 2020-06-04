@@ -1,10 +1,7 @@
 import numpy as np
-try:
-    from tools.utils.darts_utils import compute_latency_ms_tensorrt as compute_latency
-    print("use TensorRT for latency test")
-except:
-    from tools.utils.darts_utils import compute_latency_ms_pytorch as compute_latency
-    print("use PyTorch for latency test")
+
+from tools.utils.darts_utils import compute_latency_ms_pytorch as compute_latency
+
 import torch
 import torch.nn as nn
 

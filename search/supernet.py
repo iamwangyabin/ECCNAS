@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from search.operations import *
 from torch.autograd import Variable
-from tools.utils.genotypes import PRIMITIVES
+from search.genotypes import PRIMITIVES
 from search.seg_oprs import Head
 import numpy as np
 
