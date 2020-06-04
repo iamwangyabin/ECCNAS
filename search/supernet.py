@@ -351,15 +351,7 @@ class Network_Multi_Path(nn.Module):
         pred2 = torch.abs(head2(out2))
         pred02 = torch.abs(head02(torch.cat([out0, out2], dim=1)))
         pred12 = torch.abs(head12(torch.cat([out1, out2], dim=1)))
-
-        # 如果不是训练就扩到原图尺寸
-        # if not self.training:
-        #     pred0 = F.interpolate(pred0, scale_factor=8, mode='bilinear', align_corners=True)
-        #     pred1 = F.interpolate(pred1, scale_factor=8, mode='bilinear', align_corners=True)
-        #     pred2 = F.interpolate(pred2, scale_factor=8, mode='bilinear', align_corners=True)
-        #     pred02 = F.interpolate(pred02, scale_factor=8, mode='bilinear', align_corners=True)
-        #     pred12 = F.interpolate(pred12, scale_factor=8, mode='bilinear', align_corners=True)
-
+        
         return pred0, pred1, pred2, pred02, pred12
         ###################################
 
@@ -417,10 +409,8 @@ class Network_Multi_Path(nn.Module):
             for j, cell in enumerate(cells):
                 # scales
                 # out,down -- 0: from down; 1: from keep
-                out0 = None;
-                out1 = None
-                down0 = None;
-                down1 = None
+                out0 = None; out1 = None
+                down0 = None; down1 = None
                 alpha = alphas[j][i - j]
                 # ratio: (in, out, down)
                 # int: force #channel; tensor: arch_ratio; float(<=1): force width
@@ -493,33 +483,33 @@ class Network_Multi_Path(nn.Module):
         return latency
         ###################################
 
-    def _loss(self, input, target, pretrain=False):
+    def _loss(self, inputs, points, targets, st_sizes, pretrain=False):
         loss = 0
         if pretrain is not True:
             # "random width": sampled by gambel softmax
             self.prun_mode = None
             for idx in range(len(self._arch_names)):
                 self.arch_idx = idx
-                logits = self(input)
-                loss = loss + sum(self._criterion(logit, target) for logit in logits)
+                preds = self(inputs)
+                loss = loss + sum(self._criterion(pred, points, targets, st_sizes) for pred in preds)
         if len(self._width_mult_list) > 1:
             self.prun_mode = "max"
-            logits = self(input)
-            loss = loss + sum(self._criterion(logit, target) for logit in logits)
+            preds = self(inputs)
+            loss = loss + sum(self._criterion(pred, points, targets, st_sizes) for pred in preds)
             self.prun_mode = "min"
-            logits = self(input)
-            loss = loss + sum(self._criterion(logit, target) for logit in logits)
+            preds = self(inputs)
+            loss = loss + sum(self._criterion(pred, points, targets, st_sizes) for pred in preds)
             if pretrain == True:
                 self.prun_mode = "random"
-                logits = self(input)
-                loss = loss + sum(self._criterion(logit, target) for logit in logits)
+                preds = self(inputs)
+                loss = loss + sum(self._criterion(pred, points, targets, st_sizes) for pred in preds)
                 self.prun_mode = "random"
-                logits = self(input)
-                loss = loss + sum(self._criterion(logit, target) for logit in logits)
+                preds = self(inputs)
+                loss = loss + sum(self._criterion(pred, points, targets, st_sizes) for pred in preds)
         elif pretrain == True and len(self._width_mult_list) == 1:
             self.prun_mode = "max"
-            logits = self(input)
-            loss = loss + sum(self._criterion(logit, target) for logit in logits)
+            preds = self(inputs)
+            loss = loss + sum(self._criterion(pred, points, targets, st_sizes) for pred in preds)
         return loss
 
     def _build_arch_parameters(self, idx):

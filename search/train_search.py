@@ -11,7 +11,6 @@ import torch.nn as nn
 import torch.utils
 from torch.utils.data import DataLoader
 from torch.utils.data.dataloader import default_collate
-
 from tensorboardX import SummaryWriter
 
 import numpy as np
@@ -22,15 +21,11 @@ from matplotlib import pyplot as plt
 from thop import profile
 
 from config_search import config
-
 from search.crowd_dataloader import Crowd
 
-
-# from dataloader import get_train_loader
-# from datasets import Cityscapes
-
 from utils.init_func import init_weight
-from seg_opr.loss_opr import ProbOhemCrossEntropy2d
+
+from loss import Criterion
 from eval import SegEvaluator
 
 from architect import Architect
@@ -71,14 +66,14 @@ def main(pretrain=True):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
+        
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # config network and criterion ################
-    '''Need to change to BeysLoss'''
-    min_kept = int(config.batch_size * config.image_height * config.image_width // (16 * config.gt_down_sampling ** 2))
-    ohem_criterion = ProbOhemCrossEntropy2d(ignore_label=255, thresh=0.7, min_kept=min_kept, use_weight=False)
-
     # Model #######################################
-    model = Network(config.num_classes, config.layers, ohem_criterion, Fch=config.Fch, width_mult_list=config.width_mult_list, prun_modes=config.prun_modes, stem_head_width=config.stem_head_width)
+    criterion = Criterion(sigma, crop_size, downsample_ratio, background_ratio, use_background, device)
+
+    model = Network(config.layers, criterion, Fch=config.Fch, width_mult_list=config.width_mult_list, prun_modes=config.prun_modes, stem_head_width=config.stem_head_width)
     flops, params = profile(model, inputs=(torch.randn(1, 3, 1024, 2048),), verbose=False)
     logging.info("params = %fMB, FLOPs = %fGB", params / 1e6, flops / 1e9)
     model = model.cuda()
@@ -90,8 +85,8 @@ def main(pretrain=True):
         model.load_state_dict(state)
     else:
         init_weight(model, nn.init.kaiming_normal_, nn.BatchNorm2d, config.bn_eps, config.bn_momentum, mode='fan_in', nonlinearity='relu')
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
+    
     architect = Architect(model, config)
 
     # Optimizer ###################################
@@ -114,7 +109,6 @@ def main(pretrain=True):
 
     # lr policy ##############################
     lr_policy = torch.optim.lr_scheduler.ExponentialLR(optimizer, 0.978)
-
     # data loader ###########################
     '''Change Dataloader
             Need three dataloader train-model train-arch val
@@ -134,13 +128,6 @@ def main(pretrain=True):
                                       pin_memory=(True if x == 'train' else False))
                         for x in ['train', 'val']}
     train_loader_model = dataloaders['train']
-    # data_setting = {'img_root': config.img_root_folder,
-    #                 'gt_root': config.gt_root_folder,
-    #                 'train_source': config.train_source,
-    #                 'eval_source': config.eval_source,
-    #                 'down_sampling': config.down_sampling}
-    # train_loader_model = get_train_loader(config, Cityscapes, portion=config.train_portion)
-    # train_loader_arch = get_train_loader(config, Cityscapes, portion=config.train_portion-1)
     '''Need to reqair this function'''
     evaluator = SegEvaluator(Cityscapes(data_setting, 'val', None), config.num_classes, config.image_mean,
                              config.image_std, model, config.eval_scale_array, config.eval_flip, 0, config=config,
@@ -165,11 +152,12 @@ def main(pretrain=True):
 
         # training
         tbar.set_description("[Epoch %d/%d][train...]" % (epoch + 1, config.nepochs))
-        train(pretrain, train_loader_model, train_loader_arch, model, architect, ohem_criterion, optimizer, lr_policy, logger, epoch, update_arch=update_arch)
+        train(pretrain, train_loader_model, train_loader_model, model, architect, criterion, optimizer, lr_policy, logger, epoch, update_arch=update_arch)
         torch.cuda.empty_cache()
         lr_policy.step()
 
         # validation
+        '''Need to change'''
         tbar.set_description("[Epoch %d/%d][validation...]" % (epoch + 1, config.nepochs))
         with torch.no_grad():
             if pretrain == True:
@@ -254,26 +242,31 @@ def train(pretrain, train_loader_model, train_loader_arch, model, architect, cri
     for step in pbar:
         optimizer.zero_grad()
 
-        minibatch = dataloader_model.next()
-        imgs = minibatch['data']
-        target = minibatch['label']
-        imgs = imgs.cuda(non_blocking=True)
-        target = target.cuda(non_blocking=True)
+        inputs, points, targets, st_sizes = dataloader_model.next()
+        inputs = inputs.cuda(non_blocking=True)
+        points = points.cuda(non_blocking=True)
+        targets = targets.cuda(non_blocking=True)
+        st_sizes = st_sizes.cuda(non_blocking=True)
 
         if update_arch:
             # get a random minibatch from the search queue with replacement
             pbar.set_description("[Arch Step %d/%d]" % (step + 1, len(train_loader_model)))
-            minibatch = dataloader_arch.next()
-            imgs_search = minibatch['data']
-            target_search = minibatch['label']
-            imgs_search = imgs_search.cuda(non_blocking=True)
-            target_search = target_search.cuda(non_blocking=True)
+            inputs, points, targets, st_sizes = dataloader_arch.next()
+            
+            inputs = inputs.cuda(non_blocking=True)
+            points = points.cuda(non_blocking=True)
+            targets = targets.cuda(non_blocking=True)
+            st_sizes = st_sizes.cuda(non_blocking=True)
+
+            """Need to repair"""
             loss_arch = architect.step(imgs, target, imgs_search, target_search)
             if (step+1) % 10 == 0:
                 logger.add_scalar('loss_arch/train', loss_arch, epoch*len(pbar)+step)
                 logger.add_scalar('arch/latency_supernet', architect.latency_supernet, epoch*len(pbar)+step)
 
+        """Need to repair"""
         loss = model._loss(imgs, target, pretrain)
+        
         logger.add_scalar('loss/train', loss, epoch*len(pbar)+step)
         loss.backward()
         nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
