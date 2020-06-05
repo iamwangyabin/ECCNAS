@@ -4,8 +4,6 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import os.path as osp
-import sys
 import numpy as np
 from easydict import EasyDict as edict
 
@@ -26,19 +24,6 @@ C.background_ratio = 0.15
 C.use_background = True
 C.is_gray = False
 
-
-"""Image Config"""
-C.num_classes = 19
-C.background = -1
-C.image_mean = np.array([0.485, 0.456, 0.406])
-C.image_std = np.array([0.229, 0.224, 0.225])
-C.down_sampling = 2 # first down_sampling then crop ......
-C.image_height = 160 # this size is after down_sampling
-C.image_width = 160*2
-C.gt_down_sampling = 8 # model's default output size without final upsampling
-C.num_train_imgs = 2975
-C.num_eval_imgs = 500
-
 """ Settings for network, this would be different for each kind of model"""
 C.bn_eps = 1e-5
 C.bn_momentum = 0.1
@@ -49,14 +34,6 @@ C.momentum = 0.9
 C.weight_decay = 5e-4
 C.num_workers = 4
 C.train_scale_array = [0.75, 1, 1.25]
-
-"""Eval Config"""
-C.eval_stride_rate = 5 / 6
-C.eval_scale_array = [1, ]
-C.eval_flip = False
-C.eval_height = 1024
-C.eval_width = 2048
-
 
 """ Search Config """
 C.grad_clip = 5
@@ -79,21 +56,17 @@ C.FPS_min = [0, 155.]
 C.FPS_max = [0, 175.]
 if C.pretrain == True:
     C.batch_size = 3
-    C.niters_per_epoch = max(C.num_train_imgs // 2 // C.batch_size, 400)
+    C.niters_per_epoch = 400
     C.lr = 2e-2
     C.latency_weight = [0, 0]
-    C.image_height = 256 # this size is after down_sampling
-    C.image_width = 256*2
     C.nepochs = 20
-    C.save = "pretrain-%dx%d_F%d.L%d_batch%d"%(C.image_height, C.image_width, C.Fch, C.layers, C.batch_size)
+    C.save = "pretrain-F%d.L%d_batch%d"%(C.Fch, C.layers, C.batch_size)
 else:
     C.batch_size = 2
-    C.niters_per_epoch = max(C.num_train_imgs // 2 // C.batch_size, 400)
+    C.niters_per_epoch = 1800
     C.latency_weight = [0, 1e-2,]
-    C.image_height = 224 # this size is after down_sampling
-    C.image_width = 224*2
     C.nepochs = 30
-    C.save = "%dx%d_F%d.L%d_batch%d"%(C.image_height, C.image_width, C.Fch, C.layers, C.batch_size)
+    C.save = "F%d.L%d_batch%d"%(C.Fch, C.layers, C.batch_size)
 ########################################
 assert len(C.latency_weight) == len(C.stem_head_width) and len(C.stem_head_width) == len(C.FPS_min) and len(C.FPS_min) == len(C.FPS_max)
 

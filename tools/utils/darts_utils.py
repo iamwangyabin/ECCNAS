@@ -11,9 +11,6 @@ import matplotlib
 # Force matplotlib to not use any Xwindows backend.
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
-from pdb import set_trace as bp
-import warnings
-
 
 class AvgrageMeter(object):
 

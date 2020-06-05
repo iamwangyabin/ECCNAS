@@ -202,6 +202,7 @@ class Network_Multi_Path(nn.Module):
             self._arch_names.append(arch_name)
             self._arch_parameters.append(arch_param)
             self._reset_arch_parameters(i)
+
         # switch set of arch if we have more than 1 arch
         self.arch_idx = 0
 
@@ -336,8 +337,6 @@ class Network_Multi_Path(nn.Module):
                         ))
             out_prev = out
         ###################################
-        out0 = None; out1 = None; out2 = None
-
         out0 = out[0][0]
         out1 = F.interpolate(refine16[0](out[1][0]), scale_factor=2, mode='bilinear', align_corners=True)
         out1 = refine16[1](torch.cat([out1, out[0][0]], dim=1))

@@ -19,6 +19,7 @@ class Architect(object):
         self._args = args
         self._distill = distill
         self._kl = nn.KLDivLoss().cuda()
+
         self.optimizers = [
             torch.optim.Adam(arch_param, lr=args.arch_learning_rate, betas=(0.5, 0.999))#, weight_decay=args.arch_weight_decay)
             for arch_param in self.model._arch_parameters ]
@@ -30,7 +31,7 @@ class Architect(object):
 
     def _compute_unrolled_model(self, inputs, points, targets, st_sizes, eta, network_optimizer):
         loss = self.model._loss(inputs, points, targets, st_sizes)
-        theta = _concat(self.model.parameters()).data
+        theta = _concat(self.parameters()).data
         try:
             moment = _concat(network_optimizer.state[v]['momentum_buffer'] for v in self.model.parameters()).mul_(self.network_momentum)
         except:

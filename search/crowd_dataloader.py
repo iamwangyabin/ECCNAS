@@ -66,7 +66,9 @@ class Crowd(data.Dataset):
             return self.train_transform(img, keypoints)
         elif self.method == 'val':
             keypoints = np.load(gd_path)
-            img = self.trans(img)
+            wd, ht = img.size
+            valtrans = transforms.Resize([int(wd / 2) * 2, int(ht / 2) * 2], interpolation=2)
+            img = self.trans(valtrans(img))
             name = os.path.basename(img_path).split('.')[0]
             return img, len(keypoints), name
 
