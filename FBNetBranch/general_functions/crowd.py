@@ -87,10 +87,11 @@ class Crowd(data.Dataset):
         origin_area = nearest_dis * nearest_dis
         ratio = np.clip(1.0 * inner_area / origin_area, 0.0, 1.0)
         mask = (ratio >= 0.3)
-
         target = ratio[mask]
         keypoints = keypoints[mask]
         keypoints = keypoints[:, :2] - [j, i]  # change coodinate
+        cood = torch.arange(0, self.c_size, step=self.d_ratio, dtype=torch.float32) + self.d_ratio / 2
+        cood.unsqueeze_(0)
         if len(keypoints) > 0:
             if random.random() > 0.5:
                 img = F.hflip(img)
@@ -99,4 +100,4 @@ class Crowd(data.Dataset):
             if random.random() > 0.5:
                 img = F.hflip(img)
         return self.trans(img), torch.from_numpy(keypoints.copy()).float(), \
-               torch.from_numpy(target.copy()).float(), st_size
+               torch.from_numpy(target.copy()).float(), st_size, cood

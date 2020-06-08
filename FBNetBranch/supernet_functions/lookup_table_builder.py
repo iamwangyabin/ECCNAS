@@ -11,28 +11,48 @@ from supernet_functions.config_for_supernet import CONFIG_SUPERNET
 CANDIDATE_BLOCKS = ["ir_k3_e1", "ir_k3_s2", "ir_k3_e3",
                     "ir_k3_e6", "ir_k5_e1", "ir_k5_s2",
                     "ir_k5_e3", "ir_k5_e6", "skip"]
-SEARCH_SPACE = OrderedDict([
-    #### table 1. input shapes of 22 searched layers (considering with strides)
-    # Note: the second and third dimentions are recommended (will not be used in training) and written just for debagging
+
+# Low level
+BRANCH1_SEARCH_SPACE = OrderedDict([
     ("input_shape", [(16, 512, 512),
-                     (16, 512, 512), (32, 256, 256),  (32, 256, 256),  (32, 256, 256),
-                     (32, 256, 256), (64, 128, 128),  (64, 128, 128),  (64, 128, 128),
-                     (64, 128, 128), (128, 64, 64),  (128, 64, 64),  (128, 64, 64),
-                     (128, 64, 64), (256, 64, 64), (256, 64, 64), (256, 64, 64),
-                     (256, 64, 64)]),
-    # table 1. filter numbers over the 22 layers
+                     (16, 512, 512),
+                     (32, 512, 512),
+                     (32, 512, 512)]),
     ("channel_size", [16,
-                      32,  32,  32,  32,
-                      64,  64,  64,  64,
-                      128, 128, 128, 128,
-                      256, 256, 256, 256,
-                      256]),
-    # table 1. strides over the 22 layers
+                      32,
+                      32,
+                      32]),
     ("strides", [1,
-                 2, 1, 1, 1,
-                 2, 1, 1, 1,
-                 2, 1, 1, 1,
-                 1, 1, 1, 1,
+                 1,
+                 1,
+                 1])
+])
+
+BRANCH2_SEARCH_SPACE = OrderedDict([
+    ("input_shape", [(16, 512, 512),
+                     (16, 512, 512), (32, 256, 256),
+                     (32, 128, 128)]),
+    ("channel_size", [16,
+                      32,  32,
+                      64]),
+    ("strides", [1,
+                 2, 2,
+                 2])
+])
+
+
+BRANCH3_SEARCH_SPACE = OrderedDict([
+    ("input_shape", [(16, 512, 512),
+                     (16, 512, 512), (32, 256, 256),
+                     (32, 128, 128), (64, 64, 64),
+                     (64, 32, 32)]),
+    ("channel_size", [16,
+                      32,  32,
+                      64,  64,
+                      128]),
+    ("strides", [1,
+                 2, 2,
+                 2, 2,
                  1])
 ])
 
@@ -42,8 +62,7 @@ SEARCH_SPACE = OrderedDict([
 # **** to read latency from the another file use command:
 # l_table = LookUpTable(calulate_latency=False, path_to_file='lookup_table.txt')
 class LookUpTable:
-    def __init__(self, candidate_blocks=CANDIDATE_BLOCKS, search_space=SEARCH_SPACE,
-                 calulate_latency=False):
+    def __init__(self, search_space, calulate_latency, candidate_blocks=CANDIDATE_BLOCKS, brancename="branch1.txt"):
         self.cnt_layers = len(search_space["input_shape"])
         # constructors for each operation
         self.lookup_table_operations = {op_name : PRIMITIVES[op_name] for op_name in candidate_blocks}
@@ -55,17 +74,14 @@ class LookUpTable:
         self.lookup_table_latency = None
         if calulate_latency:
             self._create_from_operations(cnt_of_runs=CONFIG_SUPERNET['lookup_table']['number_of_runs'],
-                                         write_to_file=CONFIG_SUPERNET['lookup_table']['path_to_lookup_table'])
+                                         write_to_file=CONFIG_SUPERNET['lookup_table']['path_to_lookup_table']+brancename)
         else:
-            self._create_from_file(path_to_file=CONFIG_SUPERNET['lookup_table']['path_to_lookup_table'])
+            self._create_from_file(path_to_file=CONFIG_SUPERNET['lookup_table']['path_to_lookup_table']+brancename)
     
     def _generate_layers_parameters(self, search_space):
         # layers_parameters are : C_in, C_out, expansion, stride
         layers_parameters = [(search_space["input_shape"][layer_id][0],
                               search_space["channel_size"][layer_id],
-                              # expansion (set to -999) embedded into operation and will not be considered
-                              # (look fbnet_building_blocks/fbnet_builder.py - this is facebookresearch code
-                              # and I don't want to modify it)
                               -999,
                               search_space["strides"][layer_id]
                              ) for layer_id in range(self.cnt_layers)]

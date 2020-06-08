@@ -2,22 +2,23 @@ import numpy as np
 
 CONFIG_SUPERNET = {
     'gpu_settings' : {
-        'gpu_ids' : [0]
+        'gpu_nums' : 1,
+        'use_amp' : False
     },
     'lookup_table' : {
         'create_from_scratch' : False,
-        'path_to_lookup_table' : './supernet_functions/lookup_table.txt',
-        'number_of_runs' : 50 # each operation run number_of_runs times and then we will take average
+        'path_to_lookup_table' : './supernet_functions/lookup_table_',
+        'number_of_runs' : 5 # each operation run number_of_runs times and then we will take average
     },
     'logging' : {
-        'path_to_log_file' : './supernet_functions/logs/logger/',
-        'path_to_tensorboard_logs' : './supernet_functions/logs/tb'
+        'path_to_log_dir' : './supernet_functions/logs/',
+        'path_to_log_file' : 'log'
     },
     'dataloading': {
-        'dataset_path': r".\UCF-QNRF_ECCV18",
-        'crop_size': 512,
+        'dataset_path': r"D:\Bayesian-Crowd-Counting-master\processedData",
+        'crop_size': 256,
         'is_gray': False,
-        'num_workers': 8,
+        'num_workers': 1,
         'batch_size': 1,
         'downsample_ratio': 8,
     },
@@ -39,10 +40,8 @@ CONFIG_SUPERNET = {
         'use_background': True,
     },
     'train_settings' : {
-        'cnt_epochs' : 180, # 90
+        'cnt_epochs' : 500,
         'train_thetas_from_the_epoch' : 10,
-        'print_freq' : 50,
-        'path_to_save_model' : './supernet_functions/logs/best_model.pth',
         # for Gumbel Softmax
         'init_temperature' : 5.0,
         'exp_anneal_rate' : np.exp(-0.045)

@@ -12,6 +12,7 @@ import argparse
 from general_functions.crowd import Crowd
 from general_functions.utils import get_logger, weights_init, load, create_directories_from_list, \
                                     check_tensor_in_list, writh_new_ARCH_to_fbnet_modeldef
+import supernet_functions.lookup_table_builder as ltb
 from supernet_functions.lookup_table_builder import LookUpTable
 from supernet_functions.model_supernet import FBNet_Stochastic_SuperNet, SupernetLoss
 from supernet_functions.training_functions_supernet import TrainerSupernet
@@ -48,8 +49,16 @@ def train_supernet():
     writer = SummaryWriter(log_dir=CONFIG_SUPERNET['logging']['path_to_tensorboard_logs'])
     
     #### LookUp table consists all information about layers
-    lookup_table = LookUpTable(calulate_latency=CONFIG_SUPERNET['lookup_table']['create_from_scratch'])
-    
+    branch1_lookup_table = LookUpTable(search_space=ltb.BRANCH1_SEARCH_SPACE,
+                                       calulate_latency=CONFIG_SUPERNET['lookup_table']['create_from_scratch'],
+                                       brancename="branch1.txt")
+    branch2_lookup_table = LookUpTable(search_space=ltb.BRANCH2_SEARCH_SPACE,
+                                       calulate_latency=CONFIG_SUPERNET['lookup_table']['create_from_scratch'],
+                                       brancename="branch2.txt")
+    branch3_lookup_table = LookUpTable(search_space=ltb.BRANCH3_SEARCH_SPACE,
+                                       calulate_latency=CONFIG_SUPERNET['lookup_table']['create_from_scratch'],
+                                       brancename="branch3.txt")
+
     #### DataLoading
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     device_count = torch.cuda.device_count()
@@ -71,7 +80,7 @@ def train_supernet():
     test_loader = dataloaders['val']
     
     #### Model
-    model = FBNet_Stochastic_SuperNet(lookup_table).cuda()
+    model = FBNet_Stochastic_SuperNet(branch1_lookup_table, branch2_lookup_table, branch3_lookup_table).cuda()
     model = model.apply(weights_init)
     model = nn.DataParallel(model, device_ids=[0])
     #### Loss, Optimizer and Scheduler
@@ -103,43 +112,47 @@ def train_supernet():
     trainer = TrainerSupernet(criterion, w_optimizer, theta_optimizer, w_scheduler, logger, writer)
     trainer.train_loop(train_w_loader, train_thetas_loader, test_loader, model)
 
+
+
+
+
 # Arguments:
 # hardsampling=True means get operations with the largest weights
 #             =False means apply softmax to weights and sample from the distribution
 # unique_name_of_arch - name of architecture. will be written into fbnet_building_blocks/fbnet_modeldef.py
 #                       and can be used in the training by train_architecture_main_file.py
-def sample_architecture_from_the_supernet(unique_name_of_arch, hardsampling=True):
-    logger = get_logger(CONFIG_SUPERNET['logging']['path_to_log_file'])
-    
-    lookup_table = LookUpTable()
-    model = FBNet_Stochastic_SuperNet(lookup_table).cuda()
-    model = nn.DataParallel(model)
-
-    load(model, CONFIG_SUPERNET['train_settings']['path_to_save_model'])
-
-    ops_names = [op_name for op_name in lookup_table.lookup_table_operations]
-    cnt_ops = len(ops_names)
-
-    arch_operations=[]
-    if hardsampling:
-        for layer in model.module.stages_to_search:
-            arch_operations.append(ops_names[np.argmax(layer.thetas.detach().cpu().numpy())])
-    else:
-        rng = np.linspace(0, cnt_ops - 1, cnt_ops, dtype=int)
-        for layer in model.module.stages_to_search:
-            distribution = softmax(layer.thetas.detach().cpu().numpy())
-            arch_operations.append(ops_names[np.random.choice(rng, p=distribution)])
-    
-    logger.info("Sampled Architecture: " + " - ".join(arch_operations))
-    writh_new_ARCH_to_fbnet_modeldef(arch_operations, my_unique_name_for_ARCH=unique_name_of_arch)
-    logger.info("CONGRATULATIONS! New architecture " + unique_name_of_arch \
-                + " was written into fbnet_building_blocks/fbnet_modeldef.py")
+# def sample_architecture_from_the_supernet(unique_name_of_arch, hardsampling=True):
+#     logger = get_logger(CONFIG_SUPERNET['logging']['path_to_log_file'])
+#
+#     lookup_table = LookUpTable()
+#     model = FBNet_Stochastic_SuperNet(lookup_table).cuda()
+#     model = nn.DataParallel(model)
+#
+#     load(model, CONFIG_SUPERNET['train_settings']['path_to_save_model'])
+#
+#     ops_names = [op_name for op_name in lookup_table.lookup_table_operations]
+#     cnt_ops = len(ops_names)
+#
+#     arch_operations=[]
+#     if hardsampling:
+#         for layer in model.module.stages_to_search:
+#             arch_operations.append(ops_names[np.argmax(layer.thetas.detach().cpu().numpy())])
+#     else:
+#         rng = np.linspace(0, cnt_ops - 1, cnt_ops, dtype=int)
+#         for layer in model.module.stages_to_search:
+#             distribution = softmax(layer.thetas.detach().cpu().numpy())
+#             arch_operations.append(ops_names[np.random.choice(rng, p=distribution)])
+#
+#     logger.info("Sampled Architecture: " + " - ".join(arch_operations))
+#     writh_new_ARCH_to_fbnet_modeldef(arch_operations, my_unique_name_for_ARCH=unique_name_of_arch)
+#     logger.info("CONGRATULATIONS! New architecture " + unique_name_of_arch \
+#                 + " was written into fbnet_building_blocks/fbnet_modeldef.py")
     
 if __name__ == "__main__":
     assert args.train_or_sample in ['train', 'sample']
     if args.train_or_sample == 'train':
         train_supernet()
-    elif args.train_or_sample == 'sample':
-        assert args.architecture_name != '' and args.architecture_name not in MODEL_ARCH
-        hardsampling = False if args.hardsampling_bool_value in ['False', '0'] else True
-        sample_architecture_from_the_supernet(unique_name_of_arch=args.architecture_name, hardsampling=hardsampling)
+    # elif args.train_or_sample == 'sample':
+    #     assert args.architecture_name != '' and args.architecture_name not in MODEL_ARCH
+    #     hardsampling = False if args.hardsampling_bool_value in ['False', '0'] else True
+    #     sample_architecture_from_the_supernet(unique_name_of_arch=args.architecture_name, hardsampling=hardsampling)
