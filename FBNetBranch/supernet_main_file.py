@@ -31,10 +31,11 @@ args = parser.parse_args()
 def train_collate(batch):
     transposed_batch = list(zip(*batch))
     images = torch.stack(transposed_batch[0], 0)
-    points = transposed_batch[1]  # the number of points is not fixed, keep it as a list of tensor
+    points = transposed_batch[1]
     targets = transposed_batch[2]
     st_sizes = torch.FloatTensor(transposed_batch[3])
-    return images, points, targets, st_sizes
+    return images, points, targets, st_sizes, transposed_batch[4]
+
 
 def train_supernet():
     manual_seed = 1
@@ -89,7 +90,7 @@ def train_supernet():
                              CONFIG_SUPERNET['loss']['downsample_ratio'],
                              CONFIG_SUPERNET['loss']['background_ratio'],
                              CONFIG_SUPERNET['loss']['use_background'],
-                             device).cuda()
+                             ).cuda()
 
     thetas_params = [param for name, param in model.named_parameters() if 'thetas' in name]
     params_except_thetas = [param for param in model.parameters() if not check_tensor_in_list(param, thetas_params)]
@@ -113,41 +114,6 @@ def train_supernet():
     trainer.train_loop(train_w_loader, train_thetas_loader, test_loader, model)
 
 
-
-
-
-# Arguments:
-# hardsampling=True means get operations with the largest weights
-#             =False means apply softmax to weights and sample from the distribution
-# unique_name_of_arch - name of architecture. will be written into fbnet_building_blocks/fbnet_modeldef.py
-#                       and can be used in the training by train_architecture_main_file.py
-# def sample_architecture_from_the_supernet(unique_name_of_arch, hardsampling=True):
-#     logger = get_logger(CONFIG_SUPERNET['logging']['path_to_log_file'])
-#
-#     lookup_table = LookUpTable()
-#     model = FBNet_Stochastic_SuperNet(lookup_table).cuda()
-#     model = nn.DataParallel(model)
-#
-#     load(model, CONFIG_SUPERNET['train_settings']['path_to_save_model'])
-#
-#     ops_names = [op_name for op_name in lookup_table.lookup_table_operations]
-#     cnt_ops = len(ops_names)
-#
-#     arch_operations=[]
-#     if hardsampling:
-#         for layer in model.module.stages_to_search:
-#             arch_operations.append(ops_names[np.argmax(layer.thetas.detach().cpu().numpy())])
-#     else:
-#         rng = np.linspace(0, cnt_ops - 1, cnt_ops, dtype=int)
-#         for layer in model.module.stages_to_search:
-#             distribution = softmax(layer.thetas.detach().cpu().numpy())
-#             arch_operations.append(ops_names[np.random.choice(rng, p=distribution)])
-#
-#     logger.info("Sampled Architecture: " + " - ".join(arch_operations))
-#     writh_new_ARCH_to_fbnet_modeldef(arch_operations, my_unique_name_for_ARCH=unique_name_of_arch)
-#     logger.info("CONGRATULATIONS! New architecture " + unique_name_of_arch \
-#                 + " was written into fbnet_building_blocks/fbnet_modeldef.py")
-    
 if __name__ == "__main__":
     assert args.train_or_sample in ['train', 'sample']
     if args.train_or_sample == 'train':

@@ -43,7 +43,10 @@ class NAS(pl.LightningModule):
                                            brancename="branch3.txt")
 
         self.model = FBNet_Stochastic_SuperNet(self.branch1_lookup_table, self.branch2_lookup_table, self.branch3_lookup_table)
-        self.model = self.model.apply(weights_init)
+        self.thetas_params = [param for name, param in self.model.named_parameters() if 'thetas' in name]
+        self.params_except_thetas = [param for param in self.model.parameters() if not check_tensor_in_list(param, self.thetas_params)]
+
+        #self.model = self.model.apply(weights_init)
 
         self.loss = SupernetLoss(self.cfg['loss']['sigma'],
                                  self.cfg['dataloading']['crop_size'],
@@ -51,7 +54,7 @@ class NAS(pl.LightningModule):
                                  self.cfg['loss']['background_ratio'],
                                  self.cfg['loss']['use_background'])
 
-    def forward(self, x, *args, **kwargs):
+    def forward(self, x):
         return self.model(x)
 
     def prepare_data(self):
@@ -74,35 +77,32 @@ class NAS(pl.LightningModule):
         return self.dataloaders['val']
 
     def configure_optimizers(self):
-        thetas_params = [param for name, param in self.model.named_parameters() if 'thetas' in name]
-        params_except_thetas = [param for param in self.model.parameters() if not check_tensor_in_list(param, thetas_params)]
-
-        w_optimizer = torch.optim.SGD(params=params_except_thetas,
+        self.w_optimizer = torch.optim.SGD(params=self.params_except_thetas,
                                       lr=self.cfg['optimizer']['w_lr'],
                                       momentum=self.cfg['optimizer']['w_momentum'],
                                       weight_decay=self.cfg['optimizer']['w_weight_decay'])
-        theta_optimizer = torch.optim.Adam(params=thetas_params,
+        self.theta_optimizer = torch.optim.Adam(params=self.thetas_params,
                                            lr=self.cfg['optimizer']['thetas_lr'],
                                            weight_decay=self.cfg['optimizer']['thetas_weight_decay'])
-        last_epoch = -1
-        w_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(w_optimizer,
-                                                                 T_max=self.cfg['train_settings']['cnt_epochs'],
-                                                                 last_epoch=last_epoch)
+        # last_epoch = -1
+        # w_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(w_optimizer,
+        #                                                          T_max=self.cfg['train_settings']['cnt_epochs'],
+        #                                                          last_epoch=last_epoch)
+        return [self.w_optimizer, self.theta_optimizer] #, [w_scheduler, None]
 
-        return [w_optimizer, theta_optimizer] #, [w_scheduler, None]
-
-    def training_step(self, batch, batch_idx):
-        import pdb;pdb.set_trace()
+    def training_step(self, batch, batch_idx, optimizer_idx):
         inputs, points, targets, st_sizes, cood = batch
         latency_to_accumulate = Variable(torch.Tensor([[0.0]]), requires_grad=True)
-        outs, latency_to_accumulate = self.model(inputs, self.temperature, latency_to_accumulate)
+        temperature = Variable(torch.Tensor(self.temperature), requires_grad=True)
+        outs, latency_to_accumulate = self.model(inputs, temperature, latency_to_accumulate)
         loss = self.loss(outs, points, targets, st_sizes, cood, latency_to_accumulate)
         return {'loss': loss}
 
     def validation_step(self, batch, batch_idx):
         inputs, count, name = batch
-        latency_to_accumulate = Variable(torch.Tensor([[0.0]]), requires_grad=True).to(inputs.device)
-        outs, latency_to_accumulate = self.model(inputs, self.temperature, latency_to_accumulate)
+        latency_to_accumulate = Variable(torch.Tensor([[0.0]]), requires_grad=True)
+        temperature = Variable(torch.Tensor(self.temperature), requires_grad=True)
+        outs, latency_to_accumulate = self.model(inputs, temperature, latency_to_accumulate)
         res = count[0].item() - torch.sum(outs).item()
         return {"batch_val_res": res}
 
@@ -115,16 +115,16 @@ class NAS(pl.LightningModule):
         mae = np.mean(np.abs(epoch_res))
         return {"log": {"val_mse": mse, "val_mae": mae}}
 
-    def optimizer_step(self, current_epoch, batch_nb, optimizer, optimizer_i, second_order_closure=None):
-        # w optimization
-        # if optimizer_i == 0:
-        #     if current_epoch % 2 == 0:
-        #         optimizer.step()
-        #         optimizer.zero_grad()
-        if optimizer_i == 1:
-            if current_epoch <= self.cfg['train_settings']['train_thetas_from_the_epoch'] or current_epoch % 2 == 1:
-                optimizer.step()
-                optimizer.zero_grad()
+    # def optimizer_step(self, current_epoch, batch_nb, optimizer, optimizer_i, second_order_closure=None):
+    #     # w optimization
+    #     # if optimizer_i == 0:
+    #     #     if current_epoch % 2 == 0:
+    #     #         optimizer.step()
+    #     #         optimizer.zero_grad()
+    #     if optimizer_i == 1:
+    #         if current_epoch <= self.cfg['train_settings']['train_thetas_from_the_epoch'] or current_epoch % 2 == 1:
+    #             optimizer.step()
+    #             optimizer.zero_grad()
 
 
 # check_val_every_n_epoch=1

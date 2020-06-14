@@ -4,3 +4,12 @@
 *.pyc
 *.xml
 *.iml
+*.MSI
+*.experiment
+*.csv
+*.0
+*.txt
+*.txt
+*.txt
+*.pth
+FBNetBranch/log

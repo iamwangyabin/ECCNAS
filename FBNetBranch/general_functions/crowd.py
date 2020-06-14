@@ -8,6 +8,15 @@ from torchvision import transforms
 import random
 import numpy as np
 
+Dataset = [
+    "/home/teddy/JHU_Train_Val_Test",
+    "/home/teddy/NWPU_Train_Val_Test",
+    ""
+]
+
+
+
+
 
 def random_crop(im_h, im_w, crop_h, crop_w):
     res_h = im_h - crop_h
@@ -25,14 +34,15 @@ def cal_innner_area(c_left, c_up, c_right, c_down, bbox):
     inner_area = np.maximum(inner_right-inner_left, 0.0) * np.maximum(inner_down-inner_up, 0.0)
     return inner_area
 
-
-
 class Crowd(data.Dataset):
-    def __init__(self, root_path, crop_size,
+    def __init__(self, Dataset, crop_size,
                  downsample_ratio, is_gray=False,
                  method='train'):
 
-        self.root_path = root_path
+        self.dataset = Dataset
+        for i in self.dataset:
+            temp = sorted(glob(os.path.join(self.root_path, '*.jpg')))
+
         self.im_list = sorted(glob(os.path.join(self.root_path, '*.jpg')))
         if method not in ['train', 'val']:
             raise Exception("not implement")
@@ -66,9 +76,7 @@ class Crowd(data.Dataset):
             return self.train_transform(img, keypoints)
         elif self.method == 'val':
             keypoints = np.load(gd_path)
-            img = self.trans(img)
-            name = os.path.basename(img_path).split('.')[0]
-            return img, len(keypoints), name
+            return self.val_transform(img, keypoints, img_path)
 
     def train_transform(self, img, keypoints):
         """random crop image patch and find people in it"""
@@ -101,3 +109,7 @@ class Crowd(data.Dataset):
                 img = F.hflip(img)
         return self.trans(img), torch.from_numpy(keypoints.copy()).float(), \
                torch.from_numpy(target.copy()).float(), st_size, cood
+
+    def val_transform(self, img, keypoints, img_path):
+        # img = img.resize((512, 512))
+        return self.trans(img), len(keypoints), os.path.basename(img_path).split('.')[0]

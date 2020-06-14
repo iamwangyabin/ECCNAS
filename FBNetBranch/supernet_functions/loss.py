@@ -7,6 +7,7 @@ class Bay_Loss(nn.Module):
         self.use_bg = use_background
 
     def forward(self, prob_list, target_list, pre_density):
+
         loss = 0
         for idx, prob in enumerate(prob_list):  # iterative through each sample
             if prob is None:  # image contains no annotation points
@@ -38,6 +39,7 @@ class Post_Prob(nn.Module):
         self.use_bg = use_background
 
     def forward(self,cood, points, st_sizes):
+
         # coordinate is same to image space, set to constant since crop size is same
 
         num_points_per_image = [len(points_per_image) for points_per_image in points]

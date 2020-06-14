@@ -2,7 +2,7 @@ import timeit
 import torch
 from collections import OrderedDict
 import gc
-from fbnet_building_blocks.fbnet_builder import PRIMITIVES
+from fbnet_building_blocks.fbnet_builder import PRIMITIVES, PRIMITIVES_norm
 from general_functions.utils import add_text_to_file, clear_files_in_the_list
 from supernet_functions.config_for_supernet import CONFIG_SUPERNET
 
@@ -11,6 +11,9 @@ from supernet_functions.config_for_supernet import CONFIG_SUPERNET
 CANDIDATE_BLOCKS = ["ir_k3_e1", "ir_k3_s2", "ir_k3_e3",
                     "ir_k3_e6", "ir_k5_e1", "ir_k5_s2",
                     "ir_k5_e3", "ir_k5_e6", "skip"]
+
+CANDIDATE_BLOCKS2 = ["k3_se", "k5_se", "k7_se",
+                    "k3_", "k5_", "k7_", "skip"]
 
 # Low level
 BRANCH1_SEARCH_SPACE = OrderedDict([
@@ -40,19 +43,29 @@ BRANCH2_SEARCH_SPACE = OrderedDict([
                  2])
 ])
 
-
 BRANCH3_SEARCH_SPACE = OrderedDict([
     ("input_shape", [(16, 512, 512),
-                     (16, 512, 512), (32, 256, 256),
-                     (32, 128, 128), (64, 64, 64),
-                     (64, 32, 32)]),
+                     (16, 512, 512), (32, 256, 256), (32, 256, 256), (32, 256, 256),
+                     (32, 256, 256), (64, 128, 128), (64, 128, 128), (64, 128, 128),
+                     (64, 128, 128), (128, 64, 64), (128, 64, 64), (128, 64, 64),
+                     (128, 64, 64),  (256, 64, 64), (256, 64, 64), (256, 64, 64),
+                     (256, 64, 64),  (512, 32, 32), (512, 32, 32), (512, 32, 32),
+                     (512, 32, 32)]),
+    # table 1. filter numbers over the 22 layers
     ("channel_size", [16,
-                      32,  32,
-                      64,  64,
-                      128]),
+                      32, 32, 32, 32,
+                      64, 64, 64, 64,
+                      128, 128, 128, 128,
+                      256, 256, 256, 256,
+                      512, 512, 512, 512,
+                      512]),
+    # table 1. strides over the 22 layers
     ("strides", [1,
-                 2, 2,
-                 2, 2,
+                 2, 1, 1, 1,
+                 2, 1, 1, 1,
+                 2, 1, 1, 1,
+                 1, 1, 1, 1,
+                 2, 1, 1, 1,
                  1])
 ])
 
@@ -62,10 +75,10 @@ BRANCH3_SEARCH_SPACE = OrderedDict([
 # **** to read latency from the another file use command:
 # l_table = LookUpTable(calulate_latency=False, path_to_file='lookup_table.txt')
 class LookUpTable:
-    def __init__(self, search_space, calulate_latency, candidate_blocks=CANDIDATE_BLOCKS, brancename="branch1.txt"):
+    def __init__(self, search_space, calulate_latency, candidate_blocks=CANDIDATE_BLOCKS2, brancename="branch1.txt"):
         self.cnt_layers = len(search_space["input_shape"])
         # constructors for each operation
-        self.lookup_table_operations = {op_name : PRIMITIVES[op_name] for op_name in candidate_blocks}
+        self.lookup_table_operations = {op_name : PRIMITIVES_norm[op_name] for op_name in candidate_blocks}
         # arguments for the ops constructors. one set of arguments for all 9 constructors at each layer
         # input_shapes just for convinience
         self.layers_parameters, self.layers_input_shapes = self._generate_layers_parameters(search_space)

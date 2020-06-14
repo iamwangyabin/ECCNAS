@@ -29,165 +29,6 @@ def _get_divisible_by(num, divisible_by, min_val):
         ret = int((_py2_round(num / divisible_by) or min_val) * divisible_by)
     return ret
 
-
-PRIMITIVES = {
-    "skip": lambda C_in, C_out, expansion, stride, **kwargs: Identity(
-        C_in, C_out, stride
-    ),
-    "ir_k3": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, expansion, stride, **kwargs
-    ),
-    "ir_k5": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, expansion, stride, kernel=5, **kwargs
-    ),
-    "ir_k7": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, expansion, stride, kernel=7, **kwargs
-    ),
-    "ir_k1": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, expansion, stride, kernel=1, **kwargs
-    ),
-    "shuffle": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, expansion, stride, shuffle_type="mid", pw_group=4, **kwargs
-    ),
-    "basic_block": lambda C_in, C_out, expansion, stride, **kwargs: CascadeConv3x3(
-        C_in, C_out, stride
-    ),
-    "shift_5x5": lambda C_in, C_out, expansion, stride, **kwargs: ShiftBlock5x5(
-        C_in, C_out, expansion, stride
-    ),
-    # layer search 2
-    "ir_k3_e1": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 1, stride, kernel=3, **kwargs
-    ),
-    "ir_k3_e3": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 3, stride, kernel=3, **kwargs
-    ),
-    "ir_k3_e6": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 6, stride, kernel=3, **kwargs
-    ),
-    "ir_k3_s4": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 4, stride, kernel=3, shuffle_type="mid", pw_group=4, **kwargs
-    ),
-    "ir_k5_e1": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 1, stride, kernel=5, **kwargs
-    ),
-    "ir_k5_e3": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 3, stride, kernel=5, **kwargs
-    ),
-    "ir_k5_e6": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 6, stride, kernel=5, **kwargs
-    ),
-    "ir_k5_s4": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 4, stride, kernel=5, shuffle_type="mid", pw_group=4, **kwargs
-    ),
-    # layer search se
-    "ir_k3_e1_se": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 1, stride, kernel=3, se=True, **kwargs
-    ),
-    "ir_k3_e3_se": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 3, stride, kernel=3, se=True, **kwargs
-    ),
-    "ir_k3_e6_se": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 6, stride, kernel=3, se=True, **kwargs
-    ),
-    "ir_k3_s4_se": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in,
-        C_out,
-        4,
-        stride,
-        kernel=3,
-        shuffle_type="mid",
-        pw_group=4,
-        se=True,
-        **kwargs
-    ),
-    "ir_k5_e1_se": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 1, stride, kernel=5, se=True, **kwargs
-    ),
-    "ir_k5_e3_se": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 3, stride, kernel=5, se=True, **kwargs
-    ),
-    "ir_k5_e6_se": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 6, stride, kernel=5, se=True, **kwargs
-    ),
-    "ir_k5_s4_se": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in,
-        C_out,
-        4,
-        stride,
-        kernel=5,
-        shuffle_type="mid",
-        pw_group=4,
-        se=True,
-        **kwargs
-    ),
-    # layer search 3 (in addition to layer search 2)
-    "ir_k3_s2": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 1, stride, kernel=3, shuffle_type="mid", pw_group=2, **kwargs
-    ),
-    "ir_k5_s2": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 1, stride, kernel=5, shuffle_type="mid", pw_group=2, **kwargs
-    ),
-    "ir_k3_s2_se": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in,
-        C_out,
-        1,
-        stride,
-        kernel=3,
-        shuffle_type="mid",
-        pw_group=2,
-        se=True,
-        **kwargs
-    ),
-    "ir_k5_s2_se": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in,
-        C_out,
-        1,
-        stride,
-        kernel=5,
-        shuffle_type="mid",
-        pw_group=2,
-        se=True,
-        **kwargs
-    ),
-    # layer search 4 (in addition to layer search 3)
-    "ir_k3_sep": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, expansion, stride, kernel=3, cdw=True, **kwargs
-    ),
-    "ir_k33_e1": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 1, stride, kernel=3, cdw=True, **kwargs
-    ),
-    "ir_k33_e3": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 3, stride, kernel=3, cdw=True, **kwargs
-    ),
-    "ir_k33_e6": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 6, stride, kernel=3, cdw=True, **kwargs
-    ),
-    # layer search 5 (in addition to layer search 4)
-    "ir_k7_e1": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 1, stride, kernel=7, **kwargs
-    ),
-    "ir_k7_e3": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 3, stride, kernel=7, **kwargs
-    ),
-    "ir_k7_e6": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 6, stride, kernel=7, **kwargs
-    ),
-    "ir_k7_sep": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, expansion, stride, kernel=7, cdw=True, **kwargs
-    ),
-    "ir_k7_sep_e1": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 1, stride, kernel=7, cdw=True, **kwargs
-    ),
-    "ir_k7_sep_e3": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 3, stride, kernel=7, cdw=True, **kwargs
-    ),
-    "ir_k7_sep_e6": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
-        C_in, C_out, 6, stride, kernel=7, cdw=True, **kwargs
-    ),
-}
-
-
 class Flatten(nn.Module):
     def __init__(self):
         super(Flatten, self).__init__()
@@ -397,7 +238,7 @@ class ConvBNRelu(nn.Sequential):
             self.add_module("bn", bn_op)
 
         if use_relu == "relu":
-            self.add_module("relu", nn.ReLU(inplace=True))
+            self.add_module("relu", nn.ReLU(inplace=False))
 
 
 class SEModule(nn.Module):
@@ -565,6 +406,45 @@ class IRFBlock(nn.Module):
         y = self.se4(y)
         return y
 
+class NormBlock(nn.Module):
+    def __init__(
+        self,
+        input_depth,
+        output_depth,
+        expansion,
+        stride,
+        kernel=3,
+        se=False,
+    ):
+        super(NormBlock, self).__init__()
+
+        assert kernel in [1, 3, 5, 7], kernel
+
+        self.use_res_connect = stride == 1 and input_depth == output_depth
+        self.output_depth = output_depth
+
+        if kernel == 1:
+            self.op = nn.Sequential()
+        else:
+            self.op = ConvBNRelu(
+                input_depth,
+                output_depth,
+                kernel=kernel,
+                stride=stride,
+                pad=(kernel // 2),
+                no_bias=1,
+                use_relu="relu" ,
+                bn_type="bn"
+            )
+
+        self.se4 = SEModule(output_depth) if se else nn.Sequential()
+
+    def forward(self, x):
+        y = self.op(x)
+        if self.use_res_connect:
+            y += x
+        y = self.se4(y)
+        return y
 
 def _expand_block_cfg(block_cfg):
     assert isinstance(block_cfg, list)
@@ -840,3 +720,91 @@ def get_model(arch, cnt_classes):
     builder = FBNetBuilder(width_ratio=1.0, bn_type="bn", width_divisor=8, dw_skip_bn=True, dw_skip_relu=True)
     model = FBNet(builder, arch_def, dim_in=3, cnt_classes=cnt_classes)
     return model
+
+def skip(c_in, c_out, expansion, s_tride):
+    return Identity(c_in, c_out, s_tride)
+
+def ir_k3(C_in, C_out, expansion, stride):
+    return IRFBlock(C_in, C_out, expansion, stride)
+
+def ir_k5(C_in, C_out, expansion, stride):
+    return IRFBlock(C_in, C_out, expansion, stride, kernel=5)
+
+def ir_k7(C_in, C_out, expansion, stride):
+    return IRFBlock(C_in, C_out, expansion, stride, kernel=7)
+
+def ir_k1(C_in, C_out, expansion, stride):
+    return IRFBlock(C_in, C_out, expansion, stride, kernel=1)
+
+def ir_k3_e1(C_in, C_out, expansion, stride):
+    return IRFBlock(C_in, C_out, 1, stride, kernel=3)
+
+def ir_k3_e3(C_in, C_out, expansion, stride):
+    return IRFBlock(C_in, C_out, 3, stride, kernel=3)
+
+def ir_k3_e6(C_in, C_out, expansion, stride):
+    return IRFBlock(C_in, C_out, 6, stride, kernel=3)
+
+def ir_k3_s4(C_in, C_out, expansion, stride):
+    return IRFBlock(C_in, C_out, 4, stride, kernel=3, shuffle_type="mid", pw_group=4)
+
+def ir_k5_e1(C_in, C_out, expansion, stride):
+    return IRFBlock(C_in, C_out, 1, stride, kernel=5)
+
+def ir_k5_e3(C_in, C_out, expansion, stride):
+    return IRFBlock(C_in, C_out, 3, stride, kernel=5)
+
+def ir_k5_e6(C_in, C_out, expansion, stride):
+    return IRFBlock(C_in, C_out, 6, stride, kernel=5)
+
+def ir_k5_s4(C_in, C_out, expansion, stride):
+    return IRFBlock(C_in, C_out, 4, stride, kernel=5, shuffle_type="mid", pw_group=4)
+
+def ir_k3_s2(C_in, C_out, expansion, stride):
+    return IRFBlock(C_in, C_out, 1, stride, kernel=3, shuffle_type="mid", pw_group=2)
+
+def ir_k5_s2(C_in, C_out, expansion, stride):
+    return IRFBlock(C_in, C_out, 1, stride, kernel=5, shuffle_type="mid", pw_group=2)
+
+PRIMITIVES = {
+    "skip": skip,
+    "ir_k3": ir_k3,
+    "ir_k5": ir_k5,
+    "ir_k7": ir_k7,
+    "ir_k1": ir_k1,
+    "ir_k3_e1": ir_k3_e1,
+    "ir_k3_e3": ir_k3_e3,
+    "ir_k3_e6": ir_k3_e6,
+    "ir_k3_s4": ir_k3_s4,
+    "ir_k5_e1": ir_k5_e1,
+    "ir_k5_e3": ir_k5_e3,
+    "ir_k5_e6": ir_k5_e6,
+    "ir_k5_s4": ir_k5_s4,
+    "ir_k3_s2": ir_k3_s2,
+    "ir_k5_s2": ir_k5_s2,
+}
+
+
+def k3_se(C_in, C_out, expansion, stride):
+    return NormBlock(C_in, C_out, -999, stride, kernel=3, se=True)
+def k5_se(C_in, C_out, expansion, stride):
+    return NormBlock(C_in, C_out, -999, stride, kernel=5, se=True)
+def k7_se(C_in, C_out, expansion, stride):
+    return NormBlock(C_in, C_out, -999, stride, kernel=7, se=True)
+
+def k3_(C_in, C_out, expansion, stride):
+    return NormBlock(C_in, C_out, -999, stride, kernel=3, se=False)
+def k5_(C_in, C_out, expansion, stride):
+    return NormBlock(C_in, C_out, -999, stride, kernel=5, se=False)
+def k7_(C_in, C_out, expansion, stride):
+    return NormBlock(C_in, C_out, -999, stride, kernel=7, se=False)
+
+PRIMITIVES_norm = {
+    "skip": skip,
+    "k3_se": k3_se,
+    "k5_se": k5_se,
+    "k7_se": k7_se,
+    "k3_": k3_,
+    "k5_": k5_,
+    "k7_": k7_
+}
