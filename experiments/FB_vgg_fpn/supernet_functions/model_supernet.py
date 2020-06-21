@@ -44,7 +44,18 @@ class MixedOperation(nn.Module):
 class Supernet(nn.Module):
     def __init__(self):
         super(FPN, self).__init__()
+        self.first = ConvBNRelu(input_depth=3, output_depth=16, kernel=3, stride=1,
+                                pad=1, no_bias=1, use_relu="relu", bn_type="bn")
         # self.back_bone = resnet50(False)
+        self.backbone_to_search = nn.ModuleList([MixedOperation(
+                                                   branch3.layers_parameters[layer_id],
+                                                   branch3.lookup_table_operations,
+                                                   branch3.lookup_table_latency[layer_id])
+                                               for layer_id in range(branch3.cnt_layers)])
+        
+        
+        
+        
         self.back_bone = VGGNet(True)
         # Top layer
         self.toplayer = nn.Conv2d(512, 256, kernel_size=1, stride=1, padding=0)  # Reduce channels
@@ -64,7 +75,6 @@ class Supernet(nn.Module):
         self.gn1 = nn.GroupNorm(128, 128) 
         self.gn2 = nn.GroupNorm(256, 256)
 
-
         self.reg_layer = nn.Sequential(
             nn.Conv2d(512, 256, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
@@ -72,8 +82,6 @@ class Supernet(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(128, 1, 1)
         )
-        
-        
     def _upsample(self, x, h, w):
         return F.interpolate(x, size=(h, w), mode='bilinear', align_corners=True)
     def _upsample_add(self, x, y):
