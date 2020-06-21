@@ -17,7 +17,7 @@ from supernet_functions.training_functions_supernet import TrainerSupernet
 from supernet_functions.config_for_supernet import CONFIG_SUPERNET
 from supernet_functions.models.FPN.FPN import FPN
 from supernet_functions.models.densenet import densenet121
-
+from supernet_functions.models.mixnet import mixnet105
 
 def train_collate(batch):
     transposed_batch = list(zip(*batch))
@@ -59,7 +59,9 @@ def train_supernet():
     #### Model
     # model = FBNet_Stochastic_SuperNet(branch1_lookup_table, branch2_lookup_table, branch3_lookup_table).cuda()
     # model = FPN().cuda()
-    model = densenet121(pretrained=True, S=14)
+    # model = densenet121(pretrained=True, S=14)
+    model = mixnet105().cuda()
+    model.load_state_dict(torch.load("./", map_location=torch.device('cuda')), strict=False)
 
     if False:
         from collections import OrderedDict
