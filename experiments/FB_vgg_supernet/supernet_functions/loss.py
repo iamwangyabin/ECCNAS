@@ -75,3 +75,14 @@ class Post_Prob(nn.Module):
             for _ in range(len(points)):
                 prob_list.append(None)
         return prob_list
+
+class SupernetLoss(nn.Module):
+    def __init__(self, sigma, crop_size, downsample_ratio, background_ratio, use_background):
+        super(SupernetLoss, self).__init__()
+        self.post_prob = Post_Prob(sigma, crop_size, downsample_ratio, background_ratio, use_background)
+        self.criterion = Bay_Loss(use_background)
+
+    def forward(self, pred, points, target, st_sizes):
+        prob_list = self.post_prob(points, st_sizes)
+        ce = self.criterion(prob_list, target, pred)
+        return ce

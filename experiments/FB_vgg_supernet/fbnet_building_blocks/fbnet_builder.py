@@ -8,16 +8,10 @@ from collections import OrderedDict
 
 import torch
 import torch.nn as nn
-from .layers import (
-    BatchNorm2d,
-    Conv2d,
-    FrozenBatchNorm2d,
-    interpolate,
-    _NewEmptyTensorOp
-)
-from .fbnet_modeldef import MODEL_ARCH
+from .layers import (BatchNorm2d, Conv2d, FrozenBatchNorm2d, interpolate, _NewEmptyTensorOp)
 
 logger = logging.getLogger(__name__)
+
 
 def _py2_round(x):
     return math.floor(x + 0.5) if x >= 0.0 else math.ceil(x - 0.5)
@@ -28,6 +22,160 @@ def _get_divisible_by(num, divisible_by, min_val):
     if divisible_by > 0 and num % divisible_by != 0:
         ret = int((_py2_round(num / divisible_by) or min_val) * divisible_by)
     return ret
+
+
+PRIMITIVES = {
+    "skip": lambda C_in, C_out, expansion, stride, **kwargs: Identity(C_in, C_out, stride),
+    'k3_conv': lambda C_in, C_out, expansion, stride: CommonConv(C_in, C_out, kernel_size=3, stride=stride),
+    'k5_conv': lambda C_in, C_out, expansion, stride: CommonConv(C_in, C_out, kernel_size=5, stride=stride),
+    'sep_conv_3x3': lambda C_in, C_out, expansion, stride: SepConv(C_in, C_out, 3, stride, 1),
+    'sep_conv_5x5': lambda C_in, C_out, expansion, stride: SepConv(C_in, C_out, 5, stride, 2),
+    'dil_conv_3x3': lambda C_in, C_out, expansion, stride: DilConv(C_in, C_out, 3, stride, 2, 2),
+    'dil_conv_5x5': lambda C_in, C_out, expansion, stride: DilConv(C_in, C_out, 5, stride, 4, 2),
+
+    'avg_pool_3x3': lambda C, stride, affine: nn.AvgPool2d(3, stride=stride, padding=1, count_include_pad=False),
+    'max_pool_3x3': lambda C, stride, affine: nn.MaxPool2d(3, stride=stride, padding=1),
+
+    'none': lambda C, stride, affine: Zero(stride),
+    "ir_k3": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(C_in, C_out, expansion, stride, **kwargs),
+    "ir_k5": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(C_in, C_out, expansion, stride, kernel=5, **kwargs),
+    "ir_k7": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(C_in, C_out, expansion, stride, kernel=7, **kwargs),
+    "ir_k1": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(C_in, C_out, expansion, stride, kernel=1, **kwargs),
+    "shuffle": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(C_in, C_out, expansion, stride, shuffle_type="mid", pw_group=4, **kwargs),
+    "basic_block": lambda C_in, C_out, expansion, stride, **kwargs: CascadeConv3x3(C_in, C_out, stride),
+    "shift_5x5": lambda C_in, C_out, expansion, stride, **kwargs: ShiftBlock5x5(C_in, C_out, expansion, stride),
+    # layer search 2
+    "ir_k3_e1": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 1, stride, kernel=3, **kwargs
+    ),
+    "ir_k3_e3": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 3, stride, kernel=3, **kwargs
+    ),
+    "ir_k3_e6": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 6, stride, kernel=3, **kwargs
+    ),
+    "ir_k3_s4": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 4, stride, kernel=3, shuffle_type="mid", pw_group=4, **kwargs
+    ),
+    "ir_k5_e1": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 1, stride, kernel=5, **kwargs
+    ),
+    "ir_k5_e3": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 3, stride, kernel=5, **kwargs
+    ),
+    "ir_k5_e6": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 6, stride, kernel=5, **kwargs
+    ),
+    "ir_k5_s4": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 4, stride, kernel=5, shuffle_type="mid", pw_group=4, **kwargs
+    ),
+    # layer search se
+    "ir_k3_e1_se": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 1, stride, kernel=3, se=True, **kwargs
+    ),
+    "ir_k3_e3_se": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 3, stride, kernel=3, se=True, **kwargs
+    ),
+    "ir_k3_e6_se": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 6, stride, kernel=3, se=True, **kwargs
+    ),
+    "ir_k3_s4_se": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in,
+        C_out,
+        4,
+        stride,
+        kernel=3,
+        shuffle_type="mid",
+        pw_group=4,
+        se=True,
+        **kwargs
+    ),
+    "ir_k5_e1_se": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 1, stride, kernel=5, se=True, **kwargs
+    ),
+    "ir_k5_e3_se": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 3, stride, kernel=5, se=True, **kwargs
+    ),
+    "ir_k5_e6_se": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 6, stride, kernel=5, se=True, **kwargs
+    ),
+    "ir_k5_s4_se": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in,
+        C_out,
+        4,
+        stride,
+        kernel=5,
+        shuffle_type="mid",
+        pw_group=4,
+        se=True,
+        **kwargs
+    ),
+    # layer search 3 (in addition to layer search 2)
+    "ir_k3_s2": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 1, stride, kernel=3, shuffle_type="mid", pw_group=2, **kwargs
+    ),
+    "ir_k5_s2": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 1, stride, kernel=5, shuffle_type="mid", pw_group=2, **kwargs
+    ),
+    "ir_k3_s2_se": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in,
+        C_out,
+        1,
+        stride,
+        kernel=3,
+        shuffle_type="mid",
+        pw_group=2,
+        se=True,
+        **kwargs
+    ),
+    "ir_k5_s2_se": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in,
+        C_out,
+        1,
+        stride,
+        kernel=5,
+        shuffle_type="mid",
+        pw_group=2,
+        se=True,
+        **kwargs
+    ),
+    # layer search 4 (in addition to layer search 3)
+    "ir_k3_sep": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, expansion, stride, kernel=3, cdw=True, **kwargs
+    ),
+    "ir_k33_e1": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 1, stride, kernel=3, cdw=True, **kwargs
+    ),
+    "ir_k33_e3": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 3, stride, kernel=3, cdw=True, **kwargs
+    ),
+    "ir_k33_e6": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 6, stride, kernel=3, cdw=True, **kwargs
+    ),
+    # layer search 5 (in addition to layer search 4)
+    "ir_k7_e1": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 1, stride, kernel=7, **kwargs
+    ),
+    "ir_k7_e3": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 3, stride, kernel=7, **kwargs
+    ),
+    "ir_k7_e6": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 6, stride, kernel=7, **kwargs
+    ),
+    "ir_k7_sep": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, expansion, stride, kernel=7, cdw=True, **kwargs
+    ),
+    "ir_k7_sep_e1": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 1, stride, kernel=7, cdw=True, **kwargs
+    ),
+    "ir_k7_sep_e3": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 3, stride, kernel=7, cdw=True, **kwargs
+    ),
+    "ir_k7_sep_e6": lambda C_in, C_out, expansion, stride, **kwargs: IRFBlock(
+        C_in, C_out, 6, stride, kernel=7, cdw=True, **kwargs
+    ),
+}
+
 
 class Flatten(nn.Module):
     def __init__(self):
@@ -41,7 +189,7 @@ class Flatten(nn.Module):
 class Identity(nn.Module):
     def __init__(self, C_in, C_out, stride):
         super(Identity, self).__init__()
-        self.output_depth = C_out # ANNA's code here
+        self.output_depth = C_out  # ANNA's code here
         self.conv = (
             ConvBNRelu(
                 C_in,
@@ -107,7 +255,7 @@ class Shift(nn.Module):
                     num_ch = C // ksq + C % ksq
                 else:
                     num_ch = C // ksq
-                kernel[ch_idx : ch_idx + num_ch, 0, i, j] = 1
+                kernel[ch_idx: ch_idx + num_ch, 0, i, j] = 1
                 ch_idx += num_ch
 
         self.register_parameter("bias", None)
@@ -180,26 +328,26 @@ class ChannelShuffle(nn.Module):
         )
         return (
             x.view(N, g, int(C / g), H, W)
-            .permute(0, 2, 1, 3, 4)
-            .contiguous()
-            .view(N, C, H, W)
+                .permute(0, 2, 1, 3, 4)
+                .contiguous()
+                .view(N, C, H, W)
         )
 
 
 class ConvBNRelu(nn.Sequential):
     def __init__(
-        self,
-        input_depth,
-        output_depth,
-        kernel,
-        stride,
-        pad,
-        no_bias,
-        use_relu,
-        bn_type,
-        group=1,
-        *args,
-        **kwargs
+            self,
+            input_depth,
+            output_depth,
+            kernel,
+            stride,
+            pad,
+            no_bias,
+            use_relu,
+            bn_type,
+            group=1,
+            *args,
+            **kwargs
     ):
         super(ConvBNRelu, self).__init__()
 
@@ -238,9 +386,7 @@ class ConvBNRelu(nn.Sequential):
             self.add_module("bn", bn_op)
 
         if use_relu == "relu":
-            self.add_module("relu", nn.ReLU(inplace=False))
-        elif use_relu == "leakyrelu":
-            self.add_module("relu", nn.LeakyReLU(inplace=False))
+            self.add_module("relu", nn.ReLU(inplace=True))
 
 
 class SEModule(nn.Module):
@@ -276,9 +422,9 @@ class Upsample(nn.Module):
 
 def _get_upsample_op(stride):
     assert (
-        stride in [1, 2, 4]
-        or stride in [-1, -2, -4]
-        or (isinstance(stride, tuple) and all(x in [-1, -2, -4] for x in stride))
+            stride in [1, 2, 4]
+            or stride in [-1, -2, -4]
+            or (isinstance(stride, tuple) and all(x in [-1, -2, -4] for x in stride))
     )
 
     scales = stride
@@ -293,20 +439,20 @@ def _get_upsample_op(stride):
 
 class IRFBlock(nn.Module):
     def __init__(
-        self,
-        input_depth,
-        output_depth,
-        expansion,
-        stride,
-        bn_type="bn",
-        kernel=3,
-        width_divisor=1,
-        shuffle_type=None,
-        pw_group=1,
-        se=False,
-        cdw=False,
-        dw_skip_bn=False,
-        dw_skip_relu=False,
+            self,
+            input_depth,
+            output_depth,
+            expansion,
+            stride,
+            bn_type="bn",
+            kernel=3,
+            width_divisor=1,
+            shuffle_type=None,
+            pw_group=1,
+            se=False,
+            cdw=False,
+            dw_skip_bn=False,
+            dw_skip_relu=False,
     ):
         super(IRFBlock, self).__init__()
 
@@ -408,405 +554,221 @@ class IRFBlock(nn.Module):
         y = self.se4(y)
         return y
 
-class NormBlock(nn.Module):
-    def __init__(
-        self,
-        input_depth,
-        output_depth,
-        expansion,
-        stride,
-        kernel=3,
-        se=False,
-    ):
-        super(NormBlock, self).__init__()
 
-        assert kernel in [1, 3, 5, 7], kernel
+class ReLUConvBN(nn.Module):
 
-        self.use_res_connect = stride == 1 and input_depth == output_depth
-        self.output_depth = output_depth
-
-        if kernel == 1:
-            self.op = nn.Sequential()
-        else:
-            self.op = ConvBNRelu(
-                input_depth,
-                output_depth,
-                kernel=kernel,
-                stride=stride,
-                pad=(kernel // 2),
-                no_bias=1,
-                use_relu="relu" ,
-                bn_type="bn"
-            )
-
-        self.se4 = SEModule(output_depth) if se else nn.Sequential()
+    def __init__(self, C_in, C_out, kernel_size, stride, padding, affine=True):
+        super(ReLUConvBN, self).__init__()
+        self.op = nn.Sequential(
+            nn.ReLU(inplace=False),
+            nn.Conv2d(C_in, C_out, kernel_size, stride=stride, padding=padding, bias=False),
+            nn.BatchNorm2d(C_out, affine=affine)
+        )
 
     def forward(self, x):
-        y = self.op(x)
-        if self.use_res_connect:
-            y += x
-        y = self.se4(y)
-        return y
-
-def _expand_block_cfg(block_cfg):
-    assert isinstance(block_cfg, list)
-    ret = []
-    for idx in range(block_cfg[2]):
-        cur = copy.deepcopy(block_cfg)
-        cur[2] = 1
-        cur[3] = 1 if idx >= 1 else cur[3]
-        ret.append(cur)
-    return ret
+        return self.op(x)
 
 
-def expand_stage_cfg(stage_cfg):
-    """ For a single stage """
-    assert isinstance(stage_cfg, list)
-    ret = []
-    for x in stage_cfg:
-        ret += _expand_block_cfg(x)
-    return ret
+class DilConv(nn.Module):
 
-
-def expand_stages_cfg(stage_cfgs):
-    """ For a list of stages """
-    assert isinstance(stage_cfgs, list)
-    ret = []
-    for x in stage_cfgs:
-        ret.append(expand_stage_cfg(x))
-    return ret
-
-
-def _block_cfgs_to_list(block_cfgs):
-    assert isinstance(block_cfgs, list)
-    ret = []
-    for stage_idx, stage in enumerate(block_cfgs):
-        stage = expand_stage_cfg(stage)
-        for block_idx, block in enumerate(stage):
-            cur = {"stage_idx": stage_idx, "block_idx": block_idx, "block": block}
-            ret.append(cur)
-    return ret
-
-
-def _add_to_arch(arch, info, name):
-    """ arch = [{block_0}, {block_1}, ...]
-        info = [
-            # stage 0
-            [
-                block0_info,
-                block1_info,
-                ...
-            ], ...
-        ]
-        convert to:
-        arch = [
-            {
-                block_0,
-                name: block0_info,
-            },
-            {
-                block_1,
-                name: block1_info,
-            }, ...
-        ]
-    """
-    assert isinstance(arch, list) and all(isinstance(x, dict) for x in arch)
-    assert isinstance(info, list) and all(isinstance(x, list) for x in info)
-    idx = 0
-    for stage_idx, stage in enumerate(info):
-        for block_idx, block in enumerate(stage):
-            assert (
-                arch[idx]["stage_idx"] == stage_idx
-                and arch[idx]["block_idx"] == block_idx
-            ), "Index ({}, {}) does not match for block {}".format(
-                stage_idx, block_idx, arch[idx]
-            )
-            assert name not in arch[idx]
-            arch[idx][name] = block
-            idx += 1
-
-
-def unify_arch_def(arch_def):
-    """ unify the arch_def to:
-        {
-            ...,
-            "arch": [
-                {
-                    "stage_idx": idx,
-                    "block_idx": idx,
-                    ...
-                },
-                {}, ...
-            ]
-        }
-    """
-    ret = copy.deepcopy(arch_def)
-
-    assert "block_cfg" in arch_def and "stages" in arch_def["block_cfg"]
-    assert "stages" not in ret
-    # copy 'first', 'last' etc. inside arch_def['block_cfg'] to ret
-    ret.update({x: arch_def["block_cfg"][x] for x in arch_def["block_cfg"]})
-    ret["stages"] = _block_cfgs_to_list(arch_def["block_cfg"]["stages"])
-    del ret["block_cfg"]
-
-    assert "block_op_type" in arch_def
-    _add_to_arch(ret["stages"], arch_def["block_op_type"], "block_op_type")
-    del ret["block_op_type"]
-
-    return ret
-
-
-def get_num_stages(arch_def):
-    ret = 0
-    for x in arch_def["stages"]:
-        ret = max(x["stage_idx"], ret)
-    ret = ret + 1
-    return ret
-
-
-def get_blocks(arch_def, stage_indices=None, block_indices=None):
-    ret = copy.deepcopy(arch_def)
-    ret["stages"] = []
-    for block in arch_def["stages"]:
-        keep = True
-        if stage_indices not in (None, []) and block["stage_idx"] not in stage_indices:
-            keep = False
-        if block_indices not in (None, []) and block["block_idx"] not in block_indices:
-            keep = False
-        if keep:
-            ret["stages"].append(block)
-    return ret
-
-
-class FBNetBuilder(object):
-    def __init__(
-        self,
-        width_ratio,
-        bn_type="bn",
-        width_divisor=1,
-        dw_skip_bn=False,
-        dw_skip_relu=False,
-    ):
-        self.width_ratio = width_ratio
-        self.last_depth = -1
-        self.bn_type = bn_type
-        self.width_divisor = width_divisor
-        self.dw_skip_bn = dw_skip_bn
-        self.dw_skip_relu = dw_skip_relu
-
-    def add_first(self, stage_info, dim_in=3, pad=True):
-        # stage_info: [c, s, kernel]
-        assert len(stage_info) >= 2
-        channel = stage_info[0]
-        stride = stage_info[1]
-        out_depth = self._get_divisible_width(int(channel * self.width_ratio))
-        kernel = 3
-        if len(stage_info) > 2:
-            kernel = stage_info[2]
-
-        out = ConvBNRelu(
-            dim_in,
-            out_depth,
-            kernel=kernel,
-            stride=stride,
-            pad=kernel // 2 if pad else 0,
-            no_bias=1,
-            use_relu="relu",
-            bn_type=self.bn_type,
+    def __init__(self, C_in, C_out, kernel_size, stride, padding, dilation, affine=True):
+        super(DilConv, self).__init__()
+        self.op = nn.Sequential(
+            nn.ReLU(inplace=False),
+            nn.Conv2d(C_in, C_out, kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation,
+                      bias=False),
+            nn.BatchNorm2d(C_out, affine=affine),
         )
-        self.last_depth = out_depth
+
+    def forward(self, x):
+        return self.op(x)
+
+
+# Regular convoluation operations
+class CommonConv(nn.Module):
+    def __init__(self, C_in, C_out, kernel_size, stride):
+        super(CommonConv, self).__init__()
+        self.op = nn.Sequential(
+            nn.Conv2d(C_in, C_out, kernel_size=kernel_size, stride=stride, padding=(kernel_size // 2), bias=False),
+            nn.BatchNorm2d(C_out, affine=True),
+            nn.ReLU(inplace=True)
+        )
+
+    def forward(self, x):
+        return self.op(x)
+
+
+class SepConv(nn.Module):
+    def __init__(self, C_in, C_out, kernel_size, stride, padding, affine=True):
+        super(SepConv, self).__init__()
+        self.op = nn.Sequential(
+            nn.ReLU(inplace=False),
+            nn.Conv2d(C_in, C_in, kernel_size=kernel_size, stride=stride, padding=padding, groups=C_in, bias=False),
+            nn.Conv2d(C_in, C_out, kernel_size=1, padding=0, bias=False),
+            nn.BatchNorm2d(C_out, affine=affine),
+        )
+
+    def forward(self, x):
+        return self.op(x)
+
+
+class Zero(nn.Module):
+    def __init__(self, stride):
+        super(Zero, self).__init__()
+        self.stride = stride
+
+    def forward(self, x):
+        if self.stride == 1:
+            return x.mul(0.)
+        return x[:, :, ::self.stride, ::self.stride].mul(0.)
+
+
+class FactorizedReduce(nn.Module):
+
+    def __init__(self, C_in, C_out, affine=True):
+        super(FactorizedReduce, self).__init__()
+        assert C_out % 2 == 0
+        self.relu = nn.ReLU(inplace=False)
+        self.conv_1 = nn.Conv2d(C_in, C_out // 2, 1, stride=2, padding=0, bias=False)
+        self.conv_2 = nn.Conv2d(C_in, C_out // 2, 1, stride=2, padding=0, bias=False)
+        self.bn = nn.BatchNorm2d(C_out, affine=affine)
+
+    def forward(self, x):
+        x = self.relu(x)
+        out = torch.cat([self.conv_1(x), self.conv_2(x[:, :, 1:, 1:])], dim=1)
+        out = self.bn(out)
         return out
 
-    def add_blocks(self, blocks):
-        """ blocks: [{}, {}, ...]
-        """
-        assert isinstance(blocks, list) and all(
-            isinstance(x, dict) for x in blocks
-        ), blocks
 
-        modules = OrderedDict()
-        for block in blocks:
-            stage_idx = block["stage_idx"]
-            #print("stage_idx =", stage_idx)
-            
-            block_idx = block["block_idx"]
-            block_op_type = block["block_op_type"]
-            tcns = block["block"]
-            n = tcns[2]
-            assert n == 1
-            nnblock = self.add_ir_block(tcns, [block_op_type])
-            nn_name = "xif{}_{}".format(stage_idx, block_idx)
-            assert nn_name not in modules
-            modules[nn_name] = nnblock
-        ret = nn.Sequential(modules)
-        return ret
+class FactorizedIncrease(nn.Module):
+    def __init__(self, in_channel, out_channel):
+        super(FactorizedIncrease, self).__init__()
 
-    # def add_final_pool(self, model, blob_in, kernel_size):
-    #     ret = model.AveragePool(blob_in, "final_avg", kernel=kernel_size, stride=1)
-    #     return ret
-
-    def _add_ir_block(
-        self, dim_in, dim_out, stride, expand_ratio, block_op_type, **kwargs
-    ):
-        ret = PRIMITIVES[block_op_type](
-            dim_in,
-            dim_out,
-            expansion=expand_ratio,
-            stride=stride,
-            bn_type=self.bn_type,
-            width_divisor=self.width_divisor,
-            dw_skip_bn=self.dw_skip_bn,
-            dw_skip_relu=self.dw_skip_relu,
-            **kwargs
+        self._in_channel = in_channel
+        self.op = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="bilinear"),
+            nn.ReLU(inplace=False),
+            nn.Conv2d(self._in_channel, out_channel, 1, stride=1, padding=0),
+            nn.BatchNorm2d(out_channel)
         )
-        return ret, ret.output_depth
 
-    def add_ir_block(self, tcns, block_op_types, **kwargs):
-        t, c, n, s = tcns
-        assert n == 1
-        out_depth = self._get_divisible_width(int(c * self.width_ratio))
-        dim_in = self.last_depth
-        op, ret_depth = self._add_ir_block(
-            dim_in,
-            out_depth,
-            stride=s,
-            expand_ratio=t,
-            block_op_type=block_op_types[0],
-            **kwargs
-        )
-        self.last_depth = ret_depth
-        return op
-
-    def _get_divisible_width(self, width):
-        ret = _get_divisible_by(int(width), self.width_divisor, self.width_divisor)
-        return ret
-
-    def add_last_states(self, cnt_classes, dropout_ratio=0.2):
-        assert cnt_classes >= 1
-        op = nn.Sequential(OrderedDict([
-            ("conv_k1", nn.Conv2d(self.last_depth, 1504, kernel_size = 1)),
-            ("dropout", nn.Dropout(dropout_ratio)),
-            ("avg_pool_k7", nn.AvgPool2d(kernel_size=7)),
-            ("flatten", Flatten()),
-            ("fc", nn.Linear(in_features=1504, out_features=cnt_classes)),
-        ]))
-        self.last_depth = cnt_classes
-        return op
-
-def _get_trunk_cfg(arch_def):
-    num_stages = get_num_stages(arch_def)
-    trunk_stages = arch_def.get("backbone", range(num_stages - 1))
-    ret = get_blocks(arch_def, stage_indices=trunk_stages)
-    return ret
-
-class FBNet(nn.Module):
-    def __init__(
-        self, builder, arch_def, dim_in, cnt_classes=1000
-    ):
-        super(FBNet, self).__init__()
-        self.first = builder.add_first(arch_def["first"], dim_in=dim_in)
-        trunk_cfg = _get_trunk_cfg(arch_def)
-        self.stages = builder.add_blocks(trunk_cfg["stages"])
-        self.last_stages = builder.add_last_states(cnt_classes)
-    
     def forward(self, x):
-        y = self.first(x)
-        y = self.stages(y)
-        y = self.last_stages(y)
-        return y
-
-def get_model(arch, cnt_classes):
-    assert arch in MODEL_ARCH
-    arch_def = MODEL_ARCH[arch]
-    arch_def = unify_arch_def(arch_def)
-    builder = FBNetBuilder(width_ratio=1.0, bn_type="bn", width_divisor=8, dw_skip_bn=True, dw_skip_relu=True)
-    model = FBNet(builder, arch_def, dim_in=3, cnt_classes=cnt_classes)
-    return model
-
-def skip(c_in, c_out, expansion, s_tride):
-    return Identity(c_in, c_out, s_tride)
-
-def ir_k3(C_in, C_out, expansion, stride):
-    return IRFBlock(C_in, C_out, expansion, stride)
-
-def ir_k5(C_in, C_out, expansion, stride):
-    return IRFBlock(C_in, C_out, expansion, stride, kernel=5)
-
-def ir_k7(C_in, C_out, expansion, stride):
-    return IRFBlock(C_in, C_out, expansion, stride, kernel=7)
-
-def ir_k1(C_in, C_out, expansion, stride):
-    return IRFBlock(C_in, C_out, expansion, stride, kernel=1)
-
-def ir_k3_e1(C_in, C_out, expansion, stride):
-    return IRFBlock(C_in, C_out, 1, stride, kernel=3)
-
-def ir_k3_e3(C_in, C_out, expansion, stride):
-    return IRFBlock(C_in, C_out, 3, stride, kernel=3)
-
-def ir_k3_e6(C_in, C_out, expansion, stride):
-    return IRFBlock(C_in, C_out, 6, stride, kernel=3)
-
-def ir_k3_s4(C_in, C_out, expansion, stride):
-    return IRFBlock(C_in, C_out, 4, stride, kernel=3, shuffle_type="mid", pw_group=4)
-
-def ir_k5_e1(C_in, C_out, expansion, stride):
-    return IRFBlock(C_in, C_out, 1, stride, kernel=5)
-
-def ir_k5_e3(C_in, C_out, expansion, stride):
-    return IRFBlock(C_in, C_out, 3, stride, kernel=5)
-
-def ir_k5_e6(C_in, C_out, expansion, stride):
-    return IRFBlock(C_in, C_out, 6, stride, kernel=5)
-
-def ir_k5_s4(C_in, C_out, expansion, stride):
-    return IRFBlock(C_in, C_out, 4, stride, kernel=5, shuffle_type="mid", pw_group=4)
-
-def ir_k3_s2(C_in, C_out, expansion, stride):
-    return IRFBlock(C_in, C_out, 1, stride, kernel=3, shuffle_type="mid", pw_group=2)
-
-def ir_k5_s2(C_in, C_out, expansion, stride):
-    return IRFBlock(C_in, C_out, 1, stride, kernel=5, shuffle_type="mid", pw_group=2)
-
-PRIMITIVES = {
-    "skip": skip,
-    "ir_k3": ir_k3,
-    "ir_k5": ir_k5,
-    "ir_k7": ir_k7,
-    "ir_k1": ir_k1,
-    "ir_k3_e1": ir_k3_e1,
-    "ir_k3_e3": ir_k3_e3,
-    "ir_k3_e6": ir_k3_e6,
-    "ir_k3_s4": ir_k3_s4,
-    "ir_k5_e1": ir_k5_e1,
-    "ir_k5_e3": ir_k5_e3,
-    "ir_k5_e6": ir_k5_e6,
-    "ir_k5_s4": ir_k5_s4,
-    "ir_k3_s2": ir_k3_s2,
-    "ir_k5_s2": ir_k5_s2,
-}
+        return self.op(x)
 
 
-def k3_se(C_in, C_out, expansion, stride):
-    return NormBlock(C_in, C_out, -999, stride, kernel=3, se=True)
-def k5_se(C_in, C_out, expansion, stride):
-    return NormBlock(C_in, C_out, -999, stride, kernel=5, se=True)
-def k7_se(C_in, C_out, expansion, stride):
-    return NormBlock(C_in, C_out, -999, stride, kernel=7, se=True)
+class LearnedGroupConv(nn.Module):
+    global_progress = 0.0
 
-def k3_(C_in, C_out, expansion, stride):
-    return NormBlock(C_in, C_out, -999, stride, kernel=3, se=False)
-def k5_(C_in, C_out, expansion, stride):
-    return NormBlock(C_in, C_out, -999, stride, kernel=5, se=False)
-def k7_(C_in, C_out, expansion, stride):
-    return NormBlock(C_in, C_out, -999, stride, kernel=7, se=False)
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1,
+                 padding=0, dilation=1, groups=1,
+                 condense_factor=None, dropout_rate=0.):
+        super(LearnedGroupConv, self).__init__()
+        self.norm = nn.BatchNorm2d(in_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.dropout_rate = dropout_rate
+        if self.dropout_rate > 0:
+            self.drop = nn.Dropout(dropout_rate, inplace=False)
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride,
+                              padding, dilation, groups=1, bias=False)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.groups = groups
+        self.condense_factor = condense_factor
+        if self.condense_factor is None:
+            self.condense_factor = self.groups
+        ### Parameters that should be carefully used
+        self.register_buffer('_count', torch.zeros(1))
+        self.register_buffer('_stage', torch.zeros(1))
+        self.register_buffer('_mask', torch.ones(self.conv.weight.size()))
+        ### Check if arguments are valid
+        assert self.in_channels % self.groups == 0, "group number can not be divided by input channels"
+        assert self.in_channels % self.condense_factor == 0, "condensation factor can not be divided by input channels"
+        assert self.out_channels % self.groups == 0, "group number can not be divided by output channels"
 
-PRIMITIVES_norm = {
-    "skip": skip,
-    "k3_se": k3_se,
-    "k5_se": k5_se,
-    "k7_se": k7_se,
-    "k3_": k3_,
-    "k5_": k5_,
-    "k7_": k7_
-}
+    def forward(self, x):
+        self._check_drop()
+        x = self.norm(x)
+        x = self.relu(x)
+        if self.dropout_rate > 0:
+            x = self.drop(x)
+        ### Masked output
+        weight = self.conv.weight * self.mask
+        return torch.nn.functional.conv2d(x, weight, None, self.conv.stride,
+                                          self.conv.padding, self.conv.dilation, 1)
+
+    def _check_drop(self):
+        progress = LearnedGroupConv.global_progress
+        delta = 0
+        ### Get current stage
+        for i in range(self.condense_factor - 1):
+            if progress * 2 < (i + 1) / (self.condense_factor - 1):
+                stage = i
+                break
+        else:
+            stage = self.condense_factor - 1
+        ### Check for dropping
+        if not self._reach_stage(stage):
+            self.stage = stage
+            delta = self.in_channels // self.condense_factor
+        if delta > 0:
+            self._dropping(delta)
+        return
+
+    def _dropping(self, delta):
+        weight = self.conv.weight * self.mask
+        ### Sum up all kernels
+        ### Assume only apply to 1x1 conv to speed up
+        assert weight.size()[-1] == 1
+        weight = weight.abs().squeeze()
+        assert weight.size()[0] == self.out_channels
+        assert weight.size()[1] == self.in_channels
+        d_out = self.out_channels // self.groups
+        ### Shuffle weight
+        weight = weight.view(d_out, self.groups, self.in_channels)
+        weight = weight.transpose(0, 1).contiguous()
+        weight = weight.view(self.out_channels, self.in_channels)
+        ### Sort and drop
+        for i in range(self.groups):
+            wi = weight[i * d_out:(i + 1) * d_out, :]
+            ### Take corresponding delta index
+            di = wi.sum(0).sort()[1][self.count:self.count + delta]
+            for d in di.data:
+                self._mask[i::self.groups, d, :, :].fill_(0)
+        self.count = self.count + delta
+
+    @property
+    def count(self):
+        return int(self._count[0])
+
+    @count.setter
+    def count(self, val):
+        self._count.fill_(val)
+
+    @property
+    def stage(self):
+        return int(self._stage[0])
+
+    @stage.setter
+    def stage(self, val):
+        self._stage.fill_(val)
+
+    @property
+    def mask(self):
+        return torch.autograd.Variable(self._mask)
+
+    def _reach_stage(self, stage):
+        return (self._stage >= stage).all()
+
+    @property
+    def lasso_loss(self):
+        if self._reach_stage(self.groups - 1):
+            return 0
+        weight = self.conv.weight * self.mask
+        ### Assume only apply to 1x1 conv to speed up
+        assert weight.size()[-1] == 1
+        weight = weight.squeeze().pow(2)
+        d_out = self.out_channels // self.groups
+        ### Shuffle weight
+        weight = weight.view(d_out, self.groups, self.in_channels)
+        weight = weight.sum(0).clamp(min=1e-6).sqrt()
+        return weight.sum()

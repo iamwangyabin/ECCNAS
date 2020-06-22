@@ -9,16 +9,14 @@ from tensorboardX import SummaryWriter
 from collections import OrderedDict
 import torch.utils.model_zoo as model_zoo
 
-model_urls = {
-    'vgg19': 'https://download.pytorch.org/models/vgg19-dcbb9e9d.pth',
-    'vgg16': 'https://download.pytorch.org/models/vgg16-397923af.pth',
-}
 from general_functions.multi_crowd import Crowd
 from general_functions.utils import get_logger, weights_init, create_directories_from_list, check_tensor_in_list
-from supernet_functions.model_supernet import SupernetLoss
+from supernet_functions.model_supernet import Supernet
 from supernet_functions.training_functions_supernet import TrainerSupernet
 from supernet_functions.config_for_supernet import CONFIG_SUPERNET
-from supernet_functions.models.FPN.FPN import FPN
+from supernet_functions.loss import SupernetLoss
+from supernet_functions.lookup_table_builder import LookUpTable
+
 
 def train_collate(batch):
     transposed_batch = list(zip(*batch))
@@ -64,16 +62,8 @@ def train_supernet():
     test_loader = dataloaders['val']
 
     #### Model
-    model = FPN().cuda()
-
-    if True:
-        from collections import OrderedDict
-        base_weights = model_zoo.load_url(model_urls['vgg16'])
-        new_state_dict = OrderedDict()
-        for k, v in base_weights.items():
-            name = "back_bone."+k
-            new_state_dict[name] = v
-        model.load_state_dict(new_state_dict, strict=False)
+    lookup_table = LookUpTable()
+    model = Supernet(lookup_table).cuda()
 
     if False:
         from collections import OrderedDict
@@ -106,11 +96,12 @@ def train_supernet():
                                                              T_max=CONFIG_SUPERNET['train_settings']['cnt_epochs'],
                                                              last_epoch=last_epoch)
 
-    theta_optimizer = None
+    theta_optimizer = torch.optim.Adam(params=thetas_params,
+                                       lr=CONFIG_SUPERNET['optimizer']['thetas_lr'],
+                                       weight_decay=CONFIG_SUPERNET['optimizer']['thetas_weight_decay'])
     #### Training Loop
     trainer = TrainerSupernet(criterion, w_optimizer, theta_optimizer, w_scheduler, logger, writer)
     trainer.train_loop(train_w_loader, train_thetas_loader, test_loader, model)
-
 
 if __name__ == "__main__":
     train_supernet()

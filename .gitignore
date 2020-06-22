@@ -13,3 +13,4 @@
 *.txt
 *.pth
 FBNetBranch/log
+experiments/FB_vgg_supernet/supernet_functions/logs/logger

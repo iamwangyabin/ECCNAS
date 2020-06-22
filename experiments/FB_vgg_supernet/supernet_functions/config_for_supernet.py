@@ -5,18 +5,13 @@ CONFIG_SUPERNET = {
         'gpu_nums' : 1,
         'use_amp' : False
     },
-    'lookup_table' : {
-        'create_from_scratch' : False,
-        'path_to_lookup_table' : './supernet_functions/lookup_table_',
-        'number_of_runs' : 5 # each operation run number_of_runs times and then we will take average
-    },
     'logging' : {
         'path_to_log_dir' : './supernet_functions/logs/',
         'path_to_log_file': './supernet_functions/logs/logger/',
         'path_to_tensorboard_logs': './supernet_functions/logs/tb'
     },
     'dataloading': {
-        'dataset_path':  "/home/yabin/FasterCrowdCountingNAS/UCF-QNRF_ECCV18",
+        'dataset_path': "/home/yabin/FasterCrowdCountingNAS/UCF-QNRF_ECCV18",
         'UCF-QNRF_ECCV18_path': "/home/yabin/FasterCrowdCountingNAS/UCF-QNRF_ECCV18",  # 1201
         'JHU_path': "/home/teddy/JHU_Train_Val_Test",  # 4380
         'NWPU_path': "/home/teddy/NWPU_Train_Val_Test",  # 3169
