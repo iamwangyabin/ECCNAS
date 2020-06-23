@@ -99,5 +99,5 @@ class Crowd(data.Dataset):
                torch.from_numpy(target.copy()).float(), st_size
 
     def val_transform(self, img, keypoints, img_path):
-        # img = img.resize((1024, 1024))
+        img = img.resize((512, 512))
         return self.trans(img), len(keypoints), os.path.basename(img_path).split('.')[0]

@@ -54,9 +54,9 @@ def train_supernet():
     lookup_table = LookUpTable()
 
     #### Model
-    model = Supernet(lookup_table)#.cuda()
-    for i in range(100):
-        model(torch.rand([1,3,512,512]),10)
+    model = Supernet(lookup_table).cuda()
+    model = model.apply(weights_init)
+    
     # resume
     if False:
         from collections import OrderedDict

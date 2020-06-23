@@ -45,28 +45,6 @@ cfg = {
 class FBNet_Stochastic_SuperNet(nn.Module):
     def __init__(self, branch1, branch2, branch3):
         super(FBNet_Stochastic_SuperNet, self).__init__()
-        # self.first = ConvBNRelu(input_depth=3, output_depth=16, kernel=3, stride=1,
-        #                         pad=1, no_bias=1, use_relu="relu", bn_type="bn")
-        # self.branch1_to_search = nn.ModuleList([MixedOperation(
-        #                                            branch1.layers_parameters[layer_id],
-        #                                            branch1.lookup_table_operations,
-        #                                            branch1.lookup_table_latency[layer_id])
-        #                                        for layer_id in range(branch1.cnt_layers)])
-        # self.branch2_to_search = nn.ModuleList([MixedOperation(
-        #                                            branch2.layers_parameters[layer_id],
-        #                                            branch2.lookup_table_operations,
-        #                                            branch2.lookup_table_latency[layer_id])
-        #                                        for layer_id in range(branch2.cnt_layers)])
-        # self.branch3_to_search = nn.ModuleList([MixedOperation(
-        #                                            branch3.layers_parameters[layer_id],
-        #                                            branch3.lookup_table_operations,
-        #                                            branch3.lookup_table_latency[layer_id])
-        #                                        for layer_id in range(branch3.cnt_layers)])
-        # self.last_stages = nn.Sequential(
-        #     ConvBNRelu(input_depth=512, output_depth=64, kernel=3, stride=1,
-        #                pad=1, no_bias=1, use_relu="relu", bn_type="bn"),
-        #     nn.Conv2d(64,1,1)
-        # )
         self.features = make_layers(cfg['E'])
         self.reg_layer = nn.Sequential(
             nn.Conv2d(512, 256, kernel_size=3, padding=1),
@@ -76,24 +54,7 @@ class FBNet_Stochastic_SuperNet(nn.Module):
             nn.Conv2d(128, 1, 1)
         )
 
-    # def custom(self, module):
-    #     def custom_forward(*inputs):
-    #         output = module(inputs[0][0], inputs[0][1], inputs[0][2])
-    #         return output
-    #     return custom_forward
-
     def forward(self, x, temperature):
-        # y = self.first(x)
-        # for mixed_op in self.branch1_to_search:
-        #     y1, latency_to_accumulate = checkpoint.checkpoint(self.custom(mixed_op),[y1, temperature, latency_to_accumulate])
-        # for mixed_op in self.branch2_to_search:
-        #     y2, latency_to_accumulate = mixed_op(y2, temperature, latency_to_accumulate)
-        #     y2, latency_to_accumulate = checkpoint.checkpoint(self.custom(mixed_op),[y2, temperature, latency_to_accumulate])
-        # for mixed_op in self.branch3_to_search:
-        #     y = mixed_op(y, temperature)
-        # y1 = torch.nn.Upsample(scale_factor=0.125, mode="bilinear")(y1)
-        # y = torch.cat([y2,y3], dim=1)
-        # y = self.last_stages(y)
         y = self.features(x)
         y = F.upsample_bilinear(y, scale_factor=2)
         y = self.reg_layer(y)
