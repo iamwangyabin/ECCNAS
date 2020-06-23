@@ -35,7 +35,8 @@ class MixedOperation(nn.Module):
         self.thetas = nn.Parameter(torch.Tensor([1.0 / len(ops_names) for i in range(len(ops_names))]))
 
     def forward(self, x, temperature):
-        soft_mask_variables = nn.functional.gumbel_softmax(self.thetas, temperature)
+        soft_mask_variables = nn.functional.gumbel_softmax(self.thetas, temperature, hard=True)
+        print(soft_mask_variables)
         output = sum(m * op(x) for m, op in zip(soft_mask_variables, self.ops))
         return output
 
@@ -52,7 +53,10 @@ class Supernet(nn.Module):
             for layer_id in range(lookuptable.cnt_layers)])
 
         # searchable fpn
-
+        self.latlayer1 = nn.Conv2d(512, 256, kernel_size=1, stride=1, padding=0)
+        self.latlayer2 = nn.Conv2d( 512, 256, kernel_size=1, stride=1, padding=0)
+        self.latlayer3 = nn.Conv2d( 256, 256, kernel_size=1, stride=1, padding=0)
+        self.latlayer4 = nn.Conv2d( 128, 256, kernel_size=1, stride=1, padding=0)
 
 
         self.reg_layer = nn.Sequential(
@@ -65,7 +69,6 @@ class Supernet(nn.Module):
         )
 
 
-
     def forward(self, x, temperature):
         y = self.first(x)
         i = 0
@@ -75,15 +78,18 @@ class Supernet(nn.Module):
             if i%4==0:
                 scale_feature.append(y)
             i+=1
+
+
+        p5 = self.toplayer(c5)
+        p4 = self._upsample_add(p5, self.latlayer1(c4))
+        p3 = self._upsample_add(p4, self.latlayer2(c3))
+        p2 = self._upsample_add(p3, self.latlayer3(c2))
+
         y = self.reg_layer(y)
-        import pdb;pdb.set_trace()
+
+
+        # import pdb;pdb.set_trace()
         return torch.abs(y)
-
-
-
-
-
-
 
 class Supernet_pretrain(nn.Module):
     def __init__(self, lookuptable):
@@ -95,7 +101,6 @@ class Supernet_pretrain(nn.Module):
             lookuptable.layers_parameters[layer_id],
             lookuptable.lookup_table_operations)
             for layer_id in range(lookuptable.cnt_layers)])
-
 
         self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
         self.classifier = nn.Sequential(
@@ -111,6 +116,7 @@ class Supernet_pretrain(nn.Module):
     def forward(self, x, temperature):
         y = self.first(x)
         for mixed_op in self.backbone_to_search:
+            mixed_op.thetas
             y = mixed_op(y, temperature)
         y = self.maxpool(y)
         y = y.view(y.size(0), -1)

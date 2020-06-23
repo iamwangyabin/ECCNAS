@@ -12,7 +12,10 @@ from supernet_functions.config_for_supernet import CONFIG_SUPERNET
 # CANDIDATE_BLOCKS2 = ["k3_se", "k5_se", "k7_se",
 #                     "k3_", "k5_", "k7_", "skip"]
 
-CANDIDATE_BLOCKS = ["skip", "k3_conv", "k5_conv", "sep_conv_3x3", "sep_conv_5x5", "dil_conv_3x3", "dil_conv_5x5"]
+# CANDIDATE_BLOCKS = ["skip", "k3_conv", "k5_conv", "sep_conv_3x3", "sep_conv_5x5", "dil_conv_3x3", "dil_conv_5x5"]
+
+CANDIDATE_BLOCKS = ["k3_conv"]
+
 
 SEARCH_SPACE = OrderedDict([
     ("input_shape", [(16, 512, 512), (64, 512, 512), (64, 512, 512),
